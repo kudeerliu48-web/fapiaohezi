@@ -18,7 +18,7 @@ async def submit_processed_input(*, batch_id: str, file_path: str) -> Dict[str, 
     if not os.path.exists(file_path):
         raise ExternalBatchApiError(f"processed file not found: {file_path}")
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=300.0) as client:  # 5 分钟超时
         with open(file_path, "rb") as f:
             files = {"files": (os.path.basename(file_path), f, "image/webp")}
             data = {"batch_id": batch_id}
@@ -30,7 +30,7 @@ async def submit_processed_input(*, batch_id: str, file_path: str) -> Dict[str, 
 
 async def run_batch(*, batch_id: str) -> Dict[str, Any]:
     url = f"{BASE_URL}/api/batches/{batch_id}/run"
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=300.0) as client:  # 5 分钟超时
         resp = await client.post(url)
         if resp.status_code >= 400:
             raise ExternalBatchApiError(f"run failed: {resp.status_code} {resp.text}")
@@ -39,14 +39,14 @@ async def run_batch(*, batch_id: str) -> Dict[str, Any]:
 
 async def get_final_output(*, batch_id: str) -> Dict[str, Any]:
     url = f"{BASE_URL}/api/batches/{batch_id}/final-output"
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with httpx.AsyncClient(timeout=300.0) as client:  # 5 分钟超时
         resp = await client.get(url)
         if resp.status_code >= 400:
             raise ExternalBatchApiError(f"final-output failed: {resp.status_code} {resp.text}")
         return resp.json()
 
 
-async def wait_final_output(*, batch_id: str, interval_s: float = 1.0, timeout_s: float = 120.0) -> Dict[str, Any]:
+async def wait_final_output(*, batch_id: str, interval_s: float = 1.0, timeout_s: float = 300.0) -> Dict[str, Any]:  # 默认 5 分钟超时
     deadline = asyncio.get_event_loop().time() + timeout_s
     while True:
         payload = await get_final_output(batch_id=batch_id)

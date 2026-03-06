@@ -187,7 +187,8 @@ class FileService:
                     'batch_id': batch_id,
                     'filename': original_filename,
                     'saved_filename': saved_filename,
-                    'processed_filename': p.get('processed_filename'),
+                    'processed_filename': p.get('processed_filename'),  # 灰度版本（用于 OCR）
+                    'color_filename': p.get('color_filename'),  # 彩色版本（用于预览）
                     'original_file_path': f"/files/{user_id}/uploads/{saved_filename}",
                     'processed_file_path': f"/files/{user_id}/processed/{p.get('processed_filename')}" if p.get('processed_filename') else None,
                     'page_index': p.get('page_index'),
@@ -201,7 +202,8 @@ class FileService:
                         'id': invoice_id,
                         'filename': original_filename,
                         'saved_filename': saved_filename,
-                        'processed_filename': p.get('processed_filename'),
+                        'processed_filename': p.get('processed_filename'),  # 灰度版本
+                        'color_filename': p.get('color_filename'),  # 彩色版本
                         'original_file_path': invoice_data.get('original_file_path'),
                         'processed_file_path': invoice_data.get('processed_file_path'),
                         'page_index': p.get('page_index'),
@@ -598,7 +600,7 @@ async def _recognize_unrecognized_job(user_id: str, job_id: str):
         try:
             await submit_processed_input(batch_id=invoice_id, file_path=processed_path)
             await run_batch(batch_id=invoice_id)
-            final_payload = await wait_final_output(batch_id=invoice_id, interval_s=1.0, timeout_s=180.0)
+            final_payload = await wait_final_output(batch_id=invoice_id, interval_s=1.0, timeout_s=300.0)  # 5 分钟超时
 
             results = final_payload.get("results") or []
             result_json: Optional[dict] = None

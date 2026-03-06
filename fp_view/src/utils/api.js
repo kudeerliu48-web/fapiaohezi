@@ -100,10 +100,26 @@ export const api = {
     })
   },
   
-  // OCR 识别
-  recognizeInvoice(invoiceId) {
+  // OCR 识别（一键识别）
+  recognizeInvoice() {
     return request({
-      url: `/ocr/test/${invoiceId}`,
+      url: '/workbench/recognize-unrecognized',
+      method: 'POST'
+    })
+  },
+  
+  // 获取识别任务状态
+  getRecognizeStatus(jobId) {
+    return request({
+      url: `/workbench/recognize-status/${jobId}`,
+      method: 'GET'
+    })
+  },
+  
+  // 重新识别单张发票
+  retryInvoice(invoiceId) {
+    return request({
+      url: `/workbench/invoice/retry/${invoiceId}`,
       method: 'POST'
     })
   },

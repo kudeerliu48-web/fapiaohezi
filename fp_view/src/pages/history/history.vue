@@ -38,7 +38,7 @@
         </view>
         
         <view class="invoice-footer">
-          <text class="action-link" @click.stop="recognizeInvoice(item)">重新识别</text>
+          <text class="action-link" @click.stop="recognizeInvoice()">一键识别</text>
           <text class="action-link" @click.stop="deleteInvoice(item)">删除</text>
         </view>
       </view>
@@ -48,6 +48,25 @@
         <text class="empty-icon">📄</text>
         <text class="empty-text">暂无发票记录</text>
         <text class="empty-hint">快去上传第一张发票吧~</text>
+      </view>
+      
+      <!-- 识别进度提示 -->
+      <view v-if="recognizing" class="recognize-progress">
+        <view class="progress-header">
+          <text class="progress-title">正在识别发票...</text>
+          <text class="progress-percent">{{ recognizeProgress }}%</text>
+        </view>
+        <progress 
+          :percent="recognizeProgress" 
+          stroke-width="4"
+          activeColor="#4cd964"
+          backgroundColor="#e5e5e5"
+        />
+        <view class="progress-logs">
+          <text v-for="(log, index) in recognizeLogs" :key="index" class="log-item">
+            {{ log }}
+          </text>
+        </view>
       </view>
       
       <!-- 加载更多 -->
@@ -72,7 +91,13 @@ export default {
       page: 1,
       limit: 10,
       noMoreData: false,
-      keyword: ''
+      keyword: '',
+      // 识别相关
+      recognizing: false,
+      recognizeJobId: null,
+      recognizeProgress: 0,
+      recognizeStatus: 'idle', // idle, running, success, error
+      recognizeLogs: []
     }
   },
   
@@ -174,21 +199,112 @@ export default {
       })
     },
     
-    // 重新识别
-    recognizeInvoice(item) {
+    // 一键识别
+    async recognizeInvoice() {
+      const that = this;
+      
       uni.showModal({
         title: '提示',
-        content: '确定要重新识别这张发票吗？',
-        success: (res) => {
+        content: `将识别当前所有待识别的发票（共${this.getPendingCount()}张），是否继续？`,
+        success: async (res) => {
           if (res.confirm) {
-            // TODO: 调用重新识别 API
-            uni.showToast({
-              title: '开始重新识别',
-              icon: 'none'
-            })
+            try {
+              // 调用一键识别 API
+              const result = await api.recognizeInvoice();
+              that.recognizing = true;
+              that.recognizeJobId = result.data.job_id;
+              that.recognizeStatus = 'running';
+              that.recognizeProgress = 0;
+              that.recognizeLogs = [];
+              
+              uni.showLoading({
+                title: '正在识别...',
+                mask: true
+              });
+              
+              // 开始轮询状态
+              that.pollRecognizeStatus();
+              
+            } catch (error) {
+              console.error('识别失败:', error);
+              uni.showToast({
+                title: error.message || '识别失败',
+                icon: 'none'
+              });
+              that.recognizing = false;
+            }
           }
         }
       })
+    },
+    
+    // 获取待识别数量
+    getPendingCount() {
+      return this.invoiceList.filter(item => item.recognition_status === 0).length;
+    },
+    
+    // 轮询识别状态
+    pollRecognizeStatus() {
+      const that = this;
+      
+      if (!that.recognizeJobId) return;
+      
+      const timer = setInterval(async () => {
+        try {
+          const statusResult = await api.getRecognizeStatus(that.recognizeJobId);
+          const status = statusResult.data;
+          
+          // 更新进度
+          if (status.total > 0) {
+            that.recognizeProgress = Math.floor((status.completed / status.total) * 100);
+          }
+          
+          // 更新日志
+          that.recognizeLogs = status.logs || [];
+          
+          // 检查是否完成
+          if (status.status === 'completed') {
+            clearInterval(timer);
+            that.recognizing = false;
+            that.recognizeStatus = 'success';
+            
+            uni.hideLoading();
+            
+            uni.showModal({
+              title: '识别完成',
+              content: `成功 ${status.completed} 张，失败 ${status.failed} 张`,
+              showCancel: false
+            });
+            
+            // 刷新列表
+            that.loadInvoices();
+            
+          } else if (status.status === 'error') {
+            clearInterval(timer);
+            that.recognizing = false;
+            that.recognizeStatus = 'error';
+            
+            uni.hideLoading();
+            uni.showToast({
+              title: '识别过程出错',
+              icon: 'none'
+            });
+          }
+          // 如果还在运行，继续轮询
+          
+        } catch (error) {
+          console.error('轮询状态失败:', error);
+          clearInterval(timer);
+          that.recognizing = false;
+          that.recognizeStatus = 'error';
+          
+          uni.hideLoading();
+          uni.showToast({
+            title: '获取状态失败',
+            icon: 'none'
+          });
+        }
+      }, 1000); // 每秒轮询一次
     },
     
     // 删除发票
@@ -404,6 +520,48 @@ export default {
   .empty-hint {
     font-size: 26rpx;
     color: #ccc;
+  }
+}
+
+/* 识别进度样式 */
+.recognize-progress {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 16rpx;
+  padding: 32rpx;
+  margin: 24rpx;
+  box-shadow: 0 4rpx 12rpx rgba(102, 126, 234, 0.3);
+  
+  .progress-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20rpx;
+    
+    .progress-title {
+      font-size: 30rpx;
+      color: #fff;
+      font-weight: 500;
+    }
+    
+    .progress-percent {
+      font-size: 36rpx;
+      color: #fff;
+      font-weight: bold;
+    }
+  }
+  
+  .progress-logs {
+    margin-top: 24rpx;
+    max-height: 300rpx;
+    overflow-y: auto;
+    
+    .log-item {
+      display: block;
+      font-size: 24rpx;
+      color: rgba(255, 255, 255, 0.9);
+      line-height: 1.6;
+      margin-bottom: 8rpx;
+    }
   }
 }
 

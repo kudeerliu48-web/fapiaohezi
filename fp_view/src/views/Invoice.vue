@@ -15,31 +15,129 @@
     </el-row>
 
     <el-card class="operation-card" shadow="never">
-      <div class="operation-top">
-        <div
-          class="upload-area"
-          :class="{ dragover: dragOver }"
-          @dragover.prevent="dragOver = true"
-          @dragleave.prevent="dragOver = false"
-          @drop.prevent="onDropFiles"
-        >
-          <input ref="uploadInput" class="hidden-input" type="file" multiple accept="image/*,.pdf" @change="onChooseFiles" />
-          <div class="upload-text">
-            <div class="main">拖拽发票文件到此区域，或点击按钮选择文件</div>
-            <div class="sub">支持 JPG / PNG / PDF，单次可上传多文件，文件大小受后端限制</div>
+      <el-tabs v-model="activeTab" class="upload-tabs">
+        <!-- 图片上传 Tab -->
+        <el-tab-pane label="图片上传" name="upload">
+          <div
+            class="upload-area"
+            :class="{ dragover: dragOver }"
+            @dragover.prevent="dragOver = true"
+            @dragleave.prevent="dragOver = false"
+            @drop.prevent="onDropFiles"
+          >
+            <input ref="uploadInput" class="hidden-input" type="file" multiple accept="image/*,.pdf" @change="onChooseFiles" />
+            <div class="upload-text">
+              <div class="main">拖拽发票文件到此区域，或点击按钮选择文件</div>
+              <div class="sub">支持 JPG / PNG / PDF，单次可上传多文件，文件大小受后端限制</div>
+            </div>
+            <div class="upload-actions">
+              <el-button type="primary" icon="el-icon-upload2" @click="$refs.uploadInput.click()">选择文件</el-button>
+              <el-button :disabled="!pendingFiles.length" :loading="uploading" @click="submitBatchUpload">上传并创建批次</el-button>
+            </div>
           </div>
-          <div class="upload-actions">
-            <el-button type="primary" icon="el-icon-upload2" @click="$refs.uploadInput.click()">选择文件</el-button>
-            <el-button :disabled="!pendingFiles.length" :loading="uploading" @click="submitBatchUpload">上传并创建批次</el-button>
-          </div>
-        </div>
+        </el-tab-pane>
 
-        <div class="quick-actions">
-          <el-button icon="el-icon-refresh" @click="loadAll">刷新</el-button>
-          <el-button type="warning" :disabled="!selectedRows.length" :loading="retryingRows" @click="retrySelected">重试选中</el-button>
-          <el-button type="danger" icon="el-icon-delete" :loading="clearing" @click="confirmClearAll">清空历史</el-button>
-        </div>
+        <!-- 邮箱拉取 Tab -->
+        <el-tab-pane label="邮箱拉取" name="email">
+          <div class="email-panel">
+            <div class="email-form">
+              <el-form :inline="true" :model="emailForm" size="small">
+                <el-form-item label="邮箱地址">
+                  <el-input v-model="emailForm.mailbox" placeholder="请输入邮箱地址" style="width: 260px" />
+                </el-form-item>
+                <el-form-item label="授权码">
+                  <el-input v-model="emailForm.authCode" placeholder="请输入授权码" type="password" show-password style="width: 240px" />
+                </el-form-item>
+                <el-form-item label="时间范围">
+                  <el-select v-model="emailForm.rangeKey" placeholder="请选择">
+                    <el-option label="最近 7 天" value="7d" />
+                    <el-option label="最近 1 个月" value="1m" />
+                    <el-option label="最近 3 个月" value="3m" />
+                    <el-option label="最近 6 个月" value="6m" />
+                    <el-option label="最近 12 个月" value="12m" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item>
+                  <el-button type="primary" :loading="emailPulling" @click="startEmailPush">开始拉取</el-button>
+                </el-form-item>
+              </el-form>
+            </div>
+
+            <!-- 统计卡片 -->
+            <div v-if="emailJobId" class="email-stats">
+              <el-row :gutter="12">
+                <el-col :span="6">
+                  <div class="stat-card">
+                    <div class="stat-label">匹配邮件数</div>
+                    <div class="stat-value">{{ emailStats.matched_messages }}</div>
+                  </div>
+                </el-col>
+                <el-col :span="6">
+                  <div class="stat-card">
+                    <div class="stat-label">已下载附件</div>
+                    <div class="stat-value">{{ emailStats.downloaded }}</div>
+                  </div>
+                </el-col>
+                <el-col :span="6">
+                  <div class="stat-card">
+                    <div class="stat-label">已成功导入</div>
+                    <div class="stat-value success">{{ emailStats.imported }}</div>
+                  </div>
+                </el-col>
+                <el-col :span="6">
+                  <div class="stat-card">
+                    <div class="stat-label">失败数量</div>
+                    <div class="stat-value error">{{ emailStats.failed }}</div>
+                  </div>
+                </el-col>
+              </el-row>
+            </div>
+
+            <!-- 进度条 -->
+            <div v-if="emailPulling || emailStats.downloaded > 0" class="email-progress">
+              <el-progress 
+                :percentage="getEmailProgress()" 
+                :status="getEmailProgress() === 100 ? 'success' : null"
+                :format="formatEmailProgress"
+              />
+            </div>
+
+            <!-- 日志 -->
+            <div v-if="emailLogs.length" class="email-logs">
+              <div class="logs-title">处理日志</div>
+              <div class="logs-content">
+                <div v-for="(log, idx) in emailLogs" :key="idx" class="log-item">{{ log }}</div>
+              </div>
+            </div>
+          </div>
+        </el-tab-pane>
+      </el-tabs>
+
+      <div class="quick-actions">
+        <el-button icon="el-icon-refresh" @click="loadAll">刷新</el-button>
+        <el-button type="warning" :disabled="!selectedRows.length" :loading="retryingRows" @click="retrySelected">重试选中</el-button>
+        <el-button type="danger" icon="el-icon-delete" :loading="clearing" @click="confirmClearAll">清空历史</el-button>
       </div>
+    </el-card>
+
+    <!-- OCR 识别进度提示 -->
+    <el-alert
+      v-if="recognizing"
+      title="正在识别发票..."
+      type="info"
+      :closable="false"
+      show-icon
+      class="ocr-progress-alert"
+    >
+      <template slot="default">
+        <div class="ocr-progress-content">
+          <el-progress :percentage="recognizeProgress" :stroke-width="8" />
+          <div class="ocr-logs" v-if="recognizeLogs.length">
+            <div v-for="(log, idx) in recognizeLogs.slice(-5)" :key="idx" class="ocr-log-item">{{ log }}</div>
+          </div>
+        </div>
+      </template>
+    </el-alert>
 
       <div class="operation-bottom">
         <el-select v-model="filters.recognitionStatus" clearable placeholder="按识别状态筛选" size="small" style="width: 160px">
@@ -157,6 +255,7 @@
 <script>
 import { authAPI } from '@/api/auth'
 import { workbenchAPI } from '@/api/workbench'
+import { invoiceAPI } from '@/api/invoice'
 import InvoiceDetailDialog from '@/components/InvoiceDetailDialog.vue'
 import { INVOICE_STATUS, BATCH_STATUS } from '@/constants/workbench'
 
@@ -166,6 +265,7 @@ export default {
   data() {
     return {
       userId: '',
+      activeTab: 'upload', // 当前 Tab：'upload' | 'email'
       overview: {
         total_batches: 0,
         total_invoices: 0,
@@ -199,6 +299,29 @@ export default {
         limit: 20,
         total: 0,
       },
+      // 邮箱推送相关
+      emailForm: {
+        mailbox: '',
+        authCode: '',
+        rangeKey: '3m',
+      },
+      emailPulling: false,
+      emailJobId: null,
+      emailStats: {
+        matched_messages: 0,
+        downloaded: 0,
+        imported: 0,
+        failed: 0,
+      },
+      emailLogs: [],
+      emailPollTimer: null,
+      // OCR 识别相关
+      recognizing: false,
+      recognizeJobId: null,
+      recognizeProgress: 0,
+      recognizeStatus: 'idle', // idle, running, success, error
+      recognizeLogs: [],
+      recognizePollTimer: null,
     }
   },
   computed: {
@@ -229,6 +352,16 @@ export default {
       return
     }
     await this.loadAll()
+  },
+  beforeDestroy() {
+    // 清理邮箱轮询定时器
+    if (this.emailPollTimer) {
+      clearInterval(this.emailPollTimer)
+    }
+    // 清理 OCR 轮询定时器
+    if (this.recognizePollTimer) {
+      clearInterval(this.recognizePollTimer)
+    }
   },
   methods: {
     statusMeta(status) {
@@ -331,6 +464,9 @@ export default {
         this.$message.success('上传成功，批次已创建')
         this.pendingFiles = []
         await this.loadAll()
+        
+        // 自动触发 OCR 识别
+        await this.startRecognizeUnrecognized()
       } catch (e) {
         this.$message.error(`上传失败：${e.message}`)
       } finally {
@@ -407,7 +543,7 @@ export default {
     async confirmClearAll() {
       try {
         await this.$confirm(
-          '该操作将删除全部批次、发票记录、步骤调试JSON和预处理产物，且不可恢复。是否继续？',
+          '该操作将删除全部批次、发票记录、步骤调试 JSON 和预处理产物，且不可恢复。是否继续？',
           '确认清空历史',
           {
             type: 'warning',
@@ -425,6 +561,195 @@ export default {
         }
       } finally {
         this.clearing = false
+      }
+    },
+    
+    // ==================== 邮箱推送相关方法 ====================
+        
+    // 开始邮箱推送
+    async startEmailPush() {
+      const { mailbox, authCode, rangeKey } = this.emailForm
+      if (!mailbox || !authCode) {
+        this.$message.warning('请填写邮箱地址和授权码')
+        return
+      }
+          
+      this.emailPulling = true
+      this.emailJobId = null
+      this.emailStats = { matched_messages: 0, downloaded: 0, imported: 0, failed: 0 }
+      this.emailLogs = []
+          
+      try {
+        const res = await invoiceAPI.startEmailPush(this.userId, {
+          rangeKey,
+          mailbox,
+          authCode,
+        })
+        console.log('邮箱推送响应:', res)
+        console.log('res.data:', res.data)
+        // 后端返回格式：{ success, message, data: { job_id } }
+        this.emailJobId = res.data.data?.job_id || res.data.job_id
+        console.log('获取到的 jobId:', this.emailJobId)
+            
+        this.$message.success('邮箱拉取任务已启动')
+        this.pollEmailStatus()
+      } catch (e) {
+        this.$message.error(`启动邮箱推送失败：${e.message}`)
+        this.emailPulling = false
+      }
+    },
+        
+    // 轮询邮箱推送状态
+    pollEmailStatus() {
+      if (this.emailPollTimer) {
+        clearInterval(this.emailPollTimer)
+      }
+          
+      // 立即执行一次
+      this.checkEmailStatus()
+          
+      // 然后每秒轮询一次
+      this.emailPollTimer = setInterval(() => {
+        this.checkEmailStatus()
+      }, 1000) // 每 1 秒轮询一次
+    },
+        
+    // 检查邮箱推送状态（实际执行方法）
+    async checkEmailStatus() {
+      try {
+        const res = await invoiceAPI.getEmailPushStatus(this.emailJobId)
+        console.log('轮询状态响应:', res)
+        const status = res.data.data || res.data
+            
+        console.log('状态数据:', status)
+            
+        this.emailStats = {
+          matched_messages: status.matched_messages || 0,
+          downloaded: status.downloaded || 0,
+          imported: status.imported || 0,
+          failed: status.failed || 0,
+        }
+            
+        if (status.logs && status.logs.length) {
+          this.emailLogs = [...this.emailLogs, ...status.logs].slice(-100)
+        }
+            
+        // 如果已完成，停止轮询并刷新列表
+        if (status.status === 'completed') {
+          clearInterval(this.emailPollTimer)
+          this.emailPollTimer = null
+          this.emailPulling = false
+          this.$message.success('邮箱拉取完成')
+          await this.loadAll()
+          
+          // 自动触发 OCR 识别
+          await this.startRecognizeUnrecognized()
+        } else if (status.status === 'error') {
+          // 如果出错，也停止轮询
+          clearInterval(this.emailPollTimer)
+          this.emailPollTimer = null
+          this.emailPulling = false
+          this.$message.error(`邮箱拉取失败：${status.message || '未知错误'}`)
+        }
+      } catch (e) {
+        console.error('轮询邮箱状态失败:', e)
+        // 网络错误时继续轮询，但降低频率
+      }
+    },
+        
+    // 格式化进度显示
+    formatEmailProgress(percentage) {
+      if (percentage === 100) {
+        return '完成'
+      }
+      return `${percentage}%`
+    },
+        
+    // 计算邮箱进度百分比
+    getEmailProgress() {
+      if (!this.emailStats.matched_messages) return 0
+      return Math.floor((this.emailStats.downloaded / this.emailStats.matched_messages) * 100)
+    },
+    
+    // ==================== OCR 识别相关方法 ====================
+    
+    // 开始识别所有未识别发票
+    async startRecognizeUnrecognized() {
+      try {
+        const res = await workbenchAPI.recognizeUnrecognized(this.userId)
+        console.log('OCR 识别响应:', res)
+        
+        this.recognizeJobId = res.data.data?.job_id || res.data.job_id
+        this.recognizing = true
+        this.recognizeStatus = 'running'
+        this.recognizeProgress = 0
+        this.recognizeLogs = []
+        
+        this.$message.success('已启动 OCR 识别任务')
+        this.pollRecognizeStatus()
+      } catch (e) {
+        console.error('启动 OCR 识别失败:', e)
+        // 如果没有未识别的发票，直接提示
+        if (e.message && e.message.includes('没有待识别')) {
+          this.$message.info('没有待识别的发票')
+        } else {
+          this.$message.error(`启动识别失败：${e.message}`)
+        }
+      }
+    },
+    
+    // 轮询识别状态
+    pollRecognizeStatus() {
+      if (this.recognizePollTimer) {
+        clearInterval(this.recognizePollTimer)
+      }
+      
+      // 立即执行一次
+      this.checkRecognizeStatus()
+      
+      // 每秒轮询一次
+      this.recognizePollTimer = setInterval(() => {
+        this.checkRecognizeStatus()
+      }, 1000)
+    },
+    
+    // 检查识别状态（实际执行方法）
+    async checkRecognizeStatus() {
+      try {
+        const res = await workbenchAPI.getRecognizeStatus(this.userId, this.recognizeJobId)
+        console.log('识别状态响应:', res)
+        const status = res.data.data || res.data
+        
+        console.log('识别状态数据:', status)
+        
+        // 更新进度
+        if (status.total > 0) {
+          this.recognizeProgress = Math.floor((status.completed / status.total) * 100)
+        }
+        
+        // 更新日志
+        if (status.logs && status.logs.length) {
+          this.recognizeLogs = [...this.recognizeLogs, ...status.logs].slice(-50)
+        }
+        
+        // 检查是否完成
+        if (status.status === 'completed') {
+          clearInterval(this.recognizePollTimer)
+          this.recognizePollTimer = null
+          this.recognizing = false
+          this.recognizeStatus = 'success'
+          this.$message.success('OCR 识别完成')
+          await this.loadAll() // 刷新列表
+        } else if (status.status === 'error') {
+          clearInterval(this.recognizePollTimer)
+          this.recognizePollTimer = null
+          this.recognizing = false
+          this.recognizeStatus = 'error'
+          this.$message.error(`识别失败：${status.message || '未知错误'}`)
+        }
+      } catch (e) {
+        console.error('轮询识别状态失败:', e)
+        // 网络错误时继续轮询
       }
     },
   },
@@ -521,6 +846,113 @@ export default {
   display: flex;
   gap: 8px;
   align-items: flex-start;
+}
+
+.upload-tabs {
+  ::v-deep .el-tabs__header {
+    margin-bottom: 16px;
+  }
+}
+
+.email-panel {
+  padding: 12px;
+}
+
+.email-form {
+  margin-bottom: 16px;
+}
+
+.email-stats {
+  margin-top: 16px;
+  margin-bottom: 16px;
+  
+  .stat-card {
+    background: #f5f7fa;
+    border-radius: 8px;
+    padding: 16px;
+    text-align: center;
+    
+    .stat-label {
+      font-size: 13px;
+      color: #909399;
+      margin-bottom: 8px;
+    }
+    
+    .stat-value {
+      font-size: 24px;
+      font-weight: 600;
+      color: #303133;
+      
+      &.success {
+        color: #67c23a;
+      }
+      
+      &.error {
+        color: #f56c6c;
+      }
+    }
+  }
+}
+
+.email-progress {
+  margin: 16px 0;
+}
+
+.email-logs {
+  margin-top: 16px;
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  background: #fafafa;
+  max-height: 300px;
+  overflow-y: auto;
+  
+  .logs-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: #606266;
+    padding: 10px 12px;
+    border-bottom: 1px solid #e4e7ed;
+    background: #f5f7fa;
+  }
+  
+  .logs-content {
+    padding: 8px 12px;
+    
+    .log-item {
+      font-size: 12px;
+      color: #606266;
+      line-height: 1.8;
+      padding: 4px 0;
+    }
+  }
+}
+
+.ocr-progress-alert {
+  margin-bottom: 12px;
+  
+  .ocr-progress-content {
+    padding: 8px 0;
+    
+    .el-progress {
+      margin-bottom: 8px;
+    }
+    
+    .ocr-logs {
+      margin-top: 8px;
+      max-height: 120px;
+      overflow-y: auto;
+      background: rgba(245, 247, 250, 0.5);
+      border-radius: 4px;
+      padding: 8px 12px;
+      
+      .ocr-log-item {
+        font-size: 12px;
+        color: #606266;
+        line-height: 1.6;
+        padding: 2px 0;
+      }
+    }
+  }
 }
 
 .operation-bottom {

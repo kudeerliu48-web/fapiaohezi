@@ -127,9 +127,17 @@ export default {
       },
     },
     currentImage() {
+      // 优先使用彩色版本进行预览（更清晰）
+      const colorPath = this.invoice.color_filename ? `/files/${this.userId}/processed/${this.invoice.color_filename}` : null
       const processed = this.toAbsoluteUrl(this.invoice.processed_file_path || this.invoice.processed_filename, 'processed')
       const original = this.toAbsoluteUrl(this.invoice.original_file_path || this.invoice.saved_filename, 'uploads')
-      return this.previewMode === 'original' ? (original || processed) : (processed || original)
+      
+      if (this.previewMode === 'original') {
+        return original || colorPath || processed
+      } else {
+        // 处理模式：优先显示彩色版本，其次灰度版本，最后原始文件
+        return colorPath || processed || original
+      }
     },
     normalizedSteps() {
       return [...this.steps]

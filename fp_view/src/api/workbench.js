@@ -47,7 +47,9 @@ export const workbenchAPI = {
   },
 
   async retryInvoice(userId, invoiceId) {
-    return unwrap(await api.post(`/workbench/invoice/${userId}/${invoiceId}/retry`))
+    return unwrap(await api.post(`/workbench/invoice/${userId}/${invoiceId}/retry`, {}, {
+      timeout: 300000 // 5 分钟超时
+    }))
   },
 
   async retryBatch(userId, batchId) {
@@ -64,6 +66,16 @@ export const workbenchAPI = {
 
   async clearAllHistory(userId) {
     return unwrap(await api.delete(`/workbench/history/${userId}/all`))
+  },
+
+  // OCR 识别所有未识别发票
+  async recognizeUnrecognized(userId) {
+    return unwrap(await api.post(`/workbench/recognize-unrecognized`, { user_id: userId }))
+  },
+
+  // 查询识别任务状态
+  async getRecognizeStatus(userId, jobId) {
+    return unwrap(await api.get(`/workbench/recognize-status/${jobId}`, { params: { user_id: userId } }))
   },
 }
 

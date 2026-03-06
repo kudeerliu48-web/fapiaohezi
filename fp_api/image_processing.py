@@ -76,10 +76,26 @@ def _apply_unsharp(image: Image.Image, enabled: bool) -> Tuple[Image.Image, bool
     return sharpened, True
 
 
-def _save_webp(image: Image.Image, output_path: Path, quality: int) -> int:
+def _save_webp(image: Image.Image, output_path: Path, quality: int, convert_to_grayscale: bool = False) -> int:
+    """Save image as WebP.
+    
+    Args:
+        image: PIL Image to save
+        output_path: Output file path
+        quality: WebP quality (1-100)
+        convert_to_grayscale: If True, convert to grayscale before saving
+    
+    Returns:
+        File size in bytes
+    """
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    # Ensure RGB for webp
-    img = image.convert("RGB")
+    
+    if convert_to_grayscale:
+        # Convert to grayscale mode for better OCR performance
+        img = image.convert("L").convert("RGB")  # L mode for processing, RGB for WebP compatibility
+    else:
+        img = image.convert("RGB")
+    
     buf = io.BytesIO()
     img.save(buf, format="WEBP", quality=quality, method=6)
     data = buf.getvalue()
@@ -94,10 +110,19 @@ def process_images_to_webp_pages(
     base_id: str,
     original_filename: str,
     profile: ProcessProfile | None = None,
+    save_color_version: bool = True,  # Save color version for preview
 ) -> List[dict]:
     """Process a list of PIL images into webp pages under processed_dir.
 
-    Returns a list of per-page dicts: {page_index, processed_filename, bytes, width, height}.
+    Returns a list of per-page dicts: {page_index, processed_filename, bytes, width, height, color_filename}.
+    
+    Args:
+        images: List of PIL Images to process
+        processed_dir: Directory to save processed images
+        base_id: Base ID for filename generation
+        original_filename: Original uploaded filename
+        profile: Processing profile settings
+        save_color_version: If True, save both color and grayscale versions
     """
     profile = profile or ProcessProfile()
     results: List[dict] = []
@@ -113,14 +138,24 @@ def process_images_to_webp_pages(
         resized, _ = _resize_long_edge(cropped, long_edge=target_long_edge, allow_upscale=small_text)
         processed, _ = _apply_unsharp(resized, enabled=small_text)
 
+        # Generate filenames
         processed_filename = f"{base_id}_p{idx}.webp"
+        color_filename = f"{base_id}_p{idx}_color.webp" if save_color_version else None
+        
+        # Save color version for preview (if enabled)
+        if save_color_version and color_filename:
+            color_path = processed_dir / color_filename
+            _save_webp(processed, color_path, quality=quality, convert_to_grayscale=False)
+        
+        # Save grayscale version for OCR (main version)
         out_path = processed_dir / processed_filename
-        out_bytes = _save_webp(processed, out_path, quality=quality)
+        out_bytes = _save_webp(processed, out_path, quality=quality, convert_to_grayscale=True)
 
         results.append(
             {
                 "page_index": idx,
-                "processed_filename": processed_filename,
+                "processed_filename": processed_filename,  # Grayscale version for OCR
+                "color_filename": color_filename,  # Color version for preview
                 "processed_bytes": out_bytes,
                 "processed_width": processed.width,
                 "processed_height": processed.height,

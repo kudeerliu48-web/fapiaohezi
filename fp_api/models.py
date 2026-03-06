@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr
-from typing import Optional, List
+from typing import Optional, List, Any
 from datetime import datetime
 
 # 用户相关模型
@@ -100,10 +100,10 @@ class LoginLog(BaseModel):
 
 # 通用响应模型
 class ApiResponse(BaseModel):
-    """API响应模型"""
+    """API 响应模型"""
     success: bool
     message: str
-    data: Optional[dict] = None
+    data: Optional[Any] = None
     code: Optional[int] = None
     timestamp: str
 

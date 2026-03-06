@@ -467,7 +467,7 @@ class WorkbenchService:
             external_batch_id = f"{invoice_id}_{int(time.time())}"
             await submit_processed_input(batch_id=external_batch_id, file_path=processed_path)
             await run_batch(batch_id=external_batch_id)
-            final_payload = await wait_final_output(batch_id=external_batch_id, interval_s=1.0, timeout_s=180.0)
+            final_payload = await wait_final_output(batch_id=external_batch_id, interval_s=1.0, timeout_s=300.0)  # 5 分钟超时
 
             results = final_payload.get("results") or []
             first = (results[0] if results else {}) or {}
@@ -707,7 +707,7 @@ class WorkbenchService:
 
         cursor.execute(
             f"""
-            SELECT id, batch_id, filename, saved_filename, processed_filename, original_file_path, processed_file_path,
+            SELECT id, batch_id, filename, saved_filename, processed_filename, color_filename, original_file_path, processed_file_path,
                    page_index, invoice_amount, buyer, seller, invoice_number, invoice_date, service_name,
                    amount_without_tax, tax_amount, total_with_tax, final_json, total_duration_ms,
                    recognition_status, processing_time, upload_time, file_type, file_size
@@ -770,7 +770,7 @@ class WorkbenchService:
         cursor.execute(
             f"""
             SELECT
-                i.id, i.batch_id, i.filename, i.saved_filename, i.processed_filename, i.original_file_path, i.processed_file_path,
+                i.id, i.batch_id, i.filename, i.saved_filename, i.processed_filename, i.color_filename, i.original_file_path, i.processed_file_path,
                 i.page_index, i.invoice_amount, i.buyer, i.seller, i.invoice_number, i.invoice_date, i.service_name,
                 i.amount_without_tax, i.tax_amount, i.total_with_tax, i.final_json, i.total_duration_ms,
                 i.recognition_status, i.processing_time, i.upload_time, i.file_type, i.file_size,
@@ -815,26 +815,32 @@ class WorkbenchService:
         return invoice
 
     def get_invoice_steps(self, user_id: str, invoice_id: str) -> List[Dict[str, Any]]:
-        user_db_path = self._get_user_db_path(user_id)
-        conn = UserDatabaseManager.get_connection(user_db_path)
-        cursor = conn.cursor()
-        cursor.execute(
-            """
-            SELECT id, invoice_id, batch_id, step_name, step_order, status, started_at, ended_at, duration_ms,
-                   input_payload, output_payload, error_message, debug_meta, created_at, updated_at
-            FROM invoice_steps
-            WHERE invoice_id = ?
-            ORDER BY step_order ASC
-            """,
-            (invoice_id,),
-        )
-        steps = [dict(row) for row in cursor.fetchall()]
-        conn.close()
-        for s in steps:
-            s["input_payload"] = safe_json_loads(s.get("input_payload") or "{}")
-            s["output_payload"] = safe_json_loads(s.get("output_payload") or "{}")
-            s["debug_meta"] = safe_json_loads(s.get("debug_meta") or "{}")
-        return steps
+        try:
+            user_db_path = self._get_user_db_path(user_id)
+            conn = UserDatabaseManager.get_connection(user_db_path)
+            cursor = conn.cursor()
+            cursor.execute(
+                """
+                SELECT id, invoice_id, batch_id, step_name, step_order, status, started_at, ended_at, duration_ms,
+                       input_payload, output_payload, error_message, debug_meta, created_at, updated_at
+                FROM invoice_steps
+                WHERE invoice_id = ?
+                ORDER BY step_order ASC
+                """,
+                (invoice_id,),
+            )
+            steps = [dict(row) for row in cursor.fetchall()]
+            conn.close()
+            for s in steps:
+                s["input_payload"] = safe_json_loads(s.get("input_payload") or "{}")
+                s["output_payload"] = safe_json_loads(s.get("output_payload") or "{}")
+                s["debug_meta"] = safe_json_loads(s.get("debug_meta") or "{}")
+            return steps
+        except Exception as e:
+            print(f"❌ 获取发票处理步骤失败：{e}")
+            import traceback
+            traceback.print_exc()
+            raise
 
     def get_overview_stats(self, user_id: str) -> Dict[str, Any]:
         user_db_path = self._get_user_db_path(user_id)

@@ -220,6 +220,7 @@ class UserDatabaseManager:
                     filename TEXT NOT NULL,
                     saved_filename TEXT,
                     processed_filename TEXT,
+                    color_filename TEXT,  -- 彩色版本文件名（用于预览）
                     original_file_path TEXT,
                     processed_file_path TEXT,
                     page_index INTEGER,
@@ -317,6 +318,9 @@ class UserDatabaseManager:
 
             if 'processed_file_path' not in existing_columns:
                 cursor.execute("ALTER TABLE invoice_details ADD COLUMN processed_file_path TEXT")
+
+            if 'color_filename' not in existing_columns:
+                cursor.execute("ALTER TABLE invoice_details ADD COLUMN color_filename TEXT")
 
             if 'service_name' not in existing_columns:
                 cursor.execute("ALTER TABLE invoice_details ADD COLUMN service_name TEXT")
