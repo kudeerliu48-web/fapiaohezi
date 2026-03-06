@@ -2,6 +2,7 @@ import os
 import asyncio
 import shutil
 from typing import Any, Dict, Optional
+from datetime import datetime
 
 import aiofiles
 from fastapi import UploadFile, HTTPException
@@ -109,7 +110,7 @@ class FileService:
     def __init__(self):
         self.db = DatabaseManager()
 
-    async def import_local_file(self, user_id: str, src_path: str, original_filename: str) -> Dict[str, Any]:
+    async def import_local_file(self, user_id: str, src_path: str, original_filename: str, batch_id: Optional[str] = None) -> Dict[str, Any]:
         """导入本地文件（用于邮箱推送等非 UploadFile 场景），处理逻辑与手动上传一致"""
         # 检查用户是否存在
         user = self.db.get_user_by_id(user_id)
@@ -183,9 +184,12 @@ class FileService:
         try:
             for p in pages:
                 invoice_data = {
+                    'batch_id': batch_id,
                     'filename': original_filename,
                     'saved_filename': saved_filename,
                     'processed_filename': p.get('processed_filename'),
+                    'original_file_path': f"/files/{user_id}/uploads/{saved_filename}",
+                    'processed_file_path': f"/files/{user_id}/processed/{p.get('processed_filename')}" if p.get('processed_filename') else None,
                     'page_index': p.get('page_index'),
                     'file_type': file_extension,
                     'file_size': size or 0,
@@ -198,9 +202,14 @@ class FileService:
                         'filename': original_filename,
                         'saved_filename': saved_filename,
                         'processed_filename': p.get('processed_filename'),
+                        'original_file_path': invoice_data.get('original_file_path'),
+                        'processed_file_path': invoice_data.get('processed_file_path'),
                         'page_index': p.get('page_index'),
                         'file_type': file_extension,
                         'file_size': size or 0,
+                        'processed_width': p.get('processed_width'),
+                        'processed_height': p.get('processed_height'),
+                        'processed_bytes': p.get('processed_bytes'),
                         'recognition_status': 0,
                     }
                 )
@@ -230,7 +239,7 @@ class FileService:
             "message": "文件导入成功，已生成预处理图片",
         }
     
-    async def upload_file(self, user_id: str, file: UploadFile) -> Dict[str, Any]:
+    async def upload_file(self, user_id: str, file: UploadFile, batch_id: Optional[str] = None) -> Dict[str, Any]:
         """文件上传"""
         # 检查用户是否存在
         user = self.db.get_user_by_id(user_id)
@@ -299,9 +308,12 @@ class FileService:
         try:
             for p in pages:
                 invoice_data = {
+                    'batch_id': batch_id,
                     'filename': file.filename,
                     'saved_filename': saved_filename,
                     'processed_filename': p.get('processed_filename'),
+                    'original_file_path': f"/files/{user_id}/uploads/{saved_filename}",
+                    'processed_file_path': f"/files/{user_id}/processed/{p.get('processed_filename')}" if p.get('processed_filename') else None,
                     'page_index': p.get('page_index'),
                     'file_type': file_extension,
                     'file_size': len(file_content),
@@ -314,10 +326,15 @@ class FileService:
                         'filename': file.filename,
                         'saved_filename': saved_filename,
                         'processed_filename': p.get('processed_filename'),
+                        'original_file_path': invoice_data.get('original_file_path'),
+                        'processed_file_path': invoice_data.get('processed_file_path'),
                         'page_index': p.get('page_index'),
                         'file_type': file_extension,
                         'file_size': len(file_content),
                         'upload_time': invoice_data.get('upload_time'),
+                        'processed_width': p.get('processed_width'),
+                        'processed_height': p.get('processed_height'),
+                        'processed_bytes': p.get('processed_bytes'),
                         'recognition_status': 0,
                     }
                 )

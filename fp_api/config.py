@@ -22,11 +22,24 @@ class Config:
     def get_upload_dir(cls, user_id: str) -> str:
         """获取用户上传目录"""
         return os.path.join(cls.UPLOAD_DIR, user_id, "uploads")
+
+    @classmethod
+    def get_user_dir(cls, user_id: str) -> str:
+        """获取用户根目录"""
+        return os.path.join(cls.UPLOAD_DIR, user_id)
     
     @classmethod
     def get_processed_dir(cls, user_id: str) -> str:
         """获取用户处理后文件目录"""
         return os.path.join(cls.UPLOAD_DIR, user_id, "processed")
+
+    @classmethod
+    def get_debug_dir(cls, user_id: str, invoice_id: Optional[str] = None) -> str:
+        """获取调试JSON目录"""
+        base = os.path.join(cls.UPLOAD_DIR, user_id, "debug")
+        if invoice_id:
+            return os.path.join(base, invoice_id)
+        return base
     
     @classmethod
     def get_database_dir(cls, user_id: str) -> str:

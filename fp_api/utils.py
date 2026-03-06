@@ -48,15 +48,24 @@ def init_user_database(user_id: str, db_path: str) -> bool:
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS invoice_details (
                 id TEXT PRIMARY KEY,
+                batch_id TEXT,
                 filename TEXT NOT NULL,
                 saved_filename TEXT,
                 processed_filename TEXT,
+                original_file_path TEXT,
+                processed_file_path TEXT,
                 page_index INTEGER,
                 invoice_amount REAL,
                 buyer TEXT,
                 seller TEXT,
                 invoice_number TEXT,
                 invoice_date TEXT,
+                service_name TEXT,
+                amount_without_tax REAL,
+                tax_amount REAL,
+                total_with_tax REAL,
+                final_json TEXT,
+                total_duration_ms REAL,
                 recognition_status INTEGER DEFAULT 0,
                 processing_time REAL,
                 ocr_text TEXT,
@@ -71,6 +80,48 @@ def init_user_database(user_id: str, db_path: str) -> bool:
                 field3 TEXT
             )
         ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS batches (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'processing',
+                total_invoices INTEGER DEFAULT 0,
+                success_count INTEGER DEFAULT 0,
+                failed_count INTEGER DEFAULT 0,
+                total_duration_ms REAL DEFAULT 0,
+                remark TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        ''')
+
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS invoice_steps (
+                id TEXT PRIMARY KEY,
+                invoice_id TEXT NOT NULL,
+                batch_id TEXT,
+                step_name TEXT NOT NULL,
+                step_order INTEGER DEFAULT 0,
+                status TEXT NOT NULL,
+                started_at TEXT,
+                ended_at TEXT,
+                duration_ms REAL,
+                input_payload TEXT,
+                output_payload TEXT,
+                error_message TEXT,
+                debug_meta TEXT,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+        ''')
+
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_invoice_details_batch_id ON invoice_details(batch_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_invoice_details_upload_time ON invoice_details(upload_time)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_batches_created_at ON batches(created_at)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_invoice_steps_invoice_id ON invoice_steps(invoice_id)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_invoice_steps_batch_id ON invoice_steps(batch_id)")
+        cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_invoice_steps_invoice_step_unique ON invoice_steps(invoice_id, step_name)")
 
         # 兼容迁移：为已存在的表补齐新增字段
         cursor.execute("PRAGMA table_info(invoice_details)")
@@ -87,6 +138,33 @@ def init_user_database(user_id: str, db_path: str) -> bool:
 
         if 'invoice_date' not in existing_columns:
             cursor.execute("ALTER TABLE invoice_details ADD COLUMN invoice_date TEXT")
+
+        if 'batch_id' not in existing_columns:
+            cursor.execute("ALTER TABLE invoice_details ADD COLUMN batch_id TEXT")
+
+        if 'original_file_path' not in existing_columns:
+            cursor.execute("ALTER TABLE invoice_details ADD COLUMN original_file_path TEXT")
+
+        if 'processed_file_path' not in existing_columns:
+            cursor.execute("ALTER TABLE invoice_details ADD COLUMN processed_file_path TEXT")
+
+        if 'service_name' not in existing_columns:
+            cursor.execute("ALTER TABLE invoice_details ADD COLUMN service_name TEXT")
+
+        if 'amount_without_tax' not in existing_columns:
+            cursor.execute("ALTER TABLE invoice_details ADD COLUMN amount_without_tax REAL")
+
+        if 'tax_amount' not in existing_columns:
+            cursor.execute("ALTER TABLE invoice_details ADD COLUMN tax_amount REAL")
+
+        if 'total_with_tax' not in existing_columns:
+            cursor.execute("ALTER TABLE invoice_details ADD COLUMN total_with_tax REAL")
+
+        if 'final_json' not in existing_columns:
+            cursor.execute("ALTER TABLE invoice_details ADD COLUMN final_json TEXT")
+
+        if 'total_duration_ms' not in existing_columns:
+            cursor.execute("ALTER TABLE invoice_details ADD COLUMN total_duration_ms REAL")
         
         conn.commit()
         conn.close()

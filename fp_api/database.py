@@ -2,7 +2,7 @@ import sqlite3
 import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-from utils import generate_uuid, format_datetime
+from utils import generate_uuid, format_datetime, safe_json_dumps
 
 class DatabaseManager:
     """数据库管理器"""
@@ -216,15 +216,24 @@ class UserDatabaseManager:
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS invoice_details (
                     id TEXT PRIMARY KEY,
+                    batch_id TEXT,
                     filename TEXT NOT NULL,
                     saved_filename TEXT,
                     processed_filename TEXT,
+                    original_file_path TEXT,
+                    processed_file_path TEXT,
                     page_index INTEGER,
                     invoice_amount REAL,
                     buyer TEXT,
                     seller TEXT,
                     invoice_number TEXT,
                     invoice_date TEXT,
+                    service_name TEXT,
+                    amount_without_tax REAL,
+                    tax_amount REAL,
+                    total_with_tax REAL,
+                    final_json TEXT,
+                    total_duration_ms REAL,
                     recognition_status INTEGER DEFAULT 0,
                     processing_time REAL,
                     ocr_text TEXT,
@@ -239,6 +248,50 @@ class UserDatabaseManager:
                     field3 TEXT
                 )
             ''')
+
+            # 批次表
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS batches (
+                    id TEXT PRIMARY KEY,
+                    user_id TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'processing',
+                    total_invoices INTEGER DEFAULT 0,
+                    success_count INTEGER DEFAULT 0,
+                    failed_count INTEGER DEFAULT 0,
+                    total_duration_ms REAL DEFAULT 0,
+                    remark TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            ''')
+
+            # 处理步骤表
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS invoice_steps (
+                    id TEXT PRIMARY KEY,
+                    invoice_id TEXT NOT NULL,
+                    batch_id TEXT,
+                    step_name TEXT NOT NULL,
+                    step_order INTEGER DEFAULT 0,
+                    status TEXT NOT NULL,
+                    started_at TEXT,
+                    ended_at TEXT,
+                    duration_ms REAL,
+                    input_payload TEXT,
+                    output_payload TEXT,
+                    error_message TEXT,
+                    debug_meta TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            ''')
+
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_invoice_details_batch_id ON invoice_details(batch_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_invoice_details_upload_time ON invoice_details(upload_time)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_batches_created_at ON batches(created_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_invoice_steps_invoice_id ON invoice_steps(invoice_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_invoice_steps_batch_id ON invoice_steps(batch_id)")
+            cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_invoice_steps_invoice_step_unique ON invoice_steps(invoice_id, step_name)")
 
             # 兼容迁移：为已存在的表补齐新增字段
             cursor.execute("PRAGMA table_info(invoice_details)")
@@ -255,6 +308,33 @@ class UserDatabaseManager:
 
             if 'invoice_date' not in existing_columns:
                 cursor.execute("ALTER TABLE invoice_details ADD COLUMN invoice_date TEXT")
+
+            if 'batch_id' not in existing_columns:
+                cursor.execute("ALTER TABLE invoice_details ADD COLUMN batch_id TEXT")
+
+            if 'original_file_path' not in existing_columns:
+                cursor.execute("ALTER TABLE invoice_details ADD COLUMN original_file_path TEXT")
+
+            if 'processed_file_path' not in existing_columns:
+                cursor.execute("ALTER TABLE invoice_details ADD COLUMN processed_file_path TEXT")
+
+            if 'service_name' not in existing_columns:
+                cursor.execute("ALTER TABLE invoice_details ADD COLUMN service_name TEXT")
+
+            if 'amount_without_tax' not in existing_columns:
+                cursor.execute("ALTER TABLE invoice_details ADD COLUMN amount_without_tax REAL")
+
+            if 'tax_amount' not in existing_columns:
+                cursor.execute("ALTER TABLE invoice_details ADD COLUMN tax_amount REAL")
+
+            if 'total_with_tax' not in existing_columns:
+                cursor.execute("ALTER TABLE invoice_details ADD COLUMN total_with_tax REAL")
+
+            if 'final_json' not in existing_columns:
+                cursor.execute("ALTER TABLE invoice_details ADD COLUMN final_json TEXT")
+
+            if 'total_duration_ms' not in existing_columns:
+                cursor.execute("ALTER TABLE invoice_details ADD COLUMN total_duration_ms REAL")
             
             conn.commit()
             conn.close()
@@ -281,14 +361,17 @@ class UserDatabaseManager:
         
         cursor.execute('''
             INSERT INTO invoice_details (
-                id, filename, saved_filename, processed_filename, page_index, file_type, file_size, upload_time, 
-                recognition_status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                id, batch_id, filename, saved_filename, processed_filename, original_file_path, processed_file_path,
+                page_index, file_type, file_size, upload_time, recognition_status, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ''', (
             invoice_id,
+            invoice_data.get('batch_id'),
             invoice_data['filename'],
             invoice_data.get('saved_filename'),
             invoice_data.get('processed_filename'),
+            invoice_data.get('original_file_path'),
+            invoice_data.get('processed_file_path'),
             invoice_data.get('page_index'),
             invoice_data['file_type'],
             invoice_data['file_size'],
@@ -318,11 +401,22 @@ class UserDatabaseManager:
                 or (json_info.get('extracted_data', {}) or {}).get('invoice_date')
             )
 
+        # 结构化金额字段补齐
+        amount_without_tax = ocr_result.get('amount_without_tax')
+        tax_amount = ocr_result.get('tax_amount')
+        total_with_tax = ocr_result.get('total_with_tax')
+
+        if total_with_tax is None:
+            total_with_tax = ocr_result.get('invoice_amount')
+
+        final_json = ocr_result.get('final_json') if isinstance(ocr_result.get('final_json'), dict) else json_info
+
         cursor.execute('''
             UPDATE invoice_details 
             SET invoice_amount = ?, buyer = ?, seller = ?, invoice_number = ?,
                 invoice_date = ?, recognition_status = ?, processing_time = ?, ocr_text = ?, 
-                json_info = ?, updated_at = ?
+                json_info = ?, service_name = ?, amount_without_tax = ?, tax_amount = ?, total_with_tax = ?,
+                final_json = ?, total_duration_ms = ?, updated_at = ?
             WHERE id = ?
         ''', (
             ocr_result.get('invoice_amount'),
@@ -333,7 +427,13 @@ class UserDatabaseManager:
             ocr_result.get('recognition_status', 1),
             ocr_result.get('processing_time'),
             ocr_result.get('ocr_text'),
-            str(json_info),
+            safe_json_dumps(json_info if isinstance(json_info, dict) else {}),
+            ocr_result.get('service_name'),
+            amount_without_tax,
+            tax_amount,
+            total_with_tax,
+            safe_json_dumps(final_json if isinstance(final_json, dict) else {}),
+            ocr_result.get('total_duration_ms'),
             current_time,
             invoice_id
         ))
@@ -364,8 +464,10 @@ class UserDatabaseManager:
         where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
 
         cursor.execute(
-            f'''SELECT id, filename, saved_filename, processed_filename, page_index, invoice_amount, buyer, seller, invoice_number,
-                   invoice_date, recognition_status, processing_time, upload_time, file_type, file_size
+            f'''SELECT id, batch_id, filename, saved_filename, processed_filename, original_file_path, processed_file_path,
+                   page_index, invoice_amount, buyer, seller, invoice_number, invoice_date, service_name,
+                   amount_without_tax, tax_amount, total_with_tax, final_json, total_duration_ms,
+                   recognition_status, processing_time, upload_time, file_type, file_size
             FROM invoice_details 
             {where_sql}
             ORDER BY upload_time DESC 

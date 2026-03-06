@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from fastapi.responses import StreamingResponse
-from typing import Optional
+from typing import Optional, List
 import os
 import sqlite3
 import shutil
@@ -15,6 +15,7 @@ from services import start_recognize_unrecognized, get_recognition_job
 from utils import ResponseHelper
 from database import DatabaseManager
 from config import config
+from workbench_service import workbench_service
 
 from email_push import start_email_push_job, get_email_push_job
 
@@ -83,6 +84,179 @@ async def upload_file(user_id: str, file: UploadFile = File(...)):
         return ResponseHelper.error(e.detail, e.status_code)
     except Exception as e:
         return ResponseHelper.error(f"文件上传失败: {str(e)}", 500)
+
+
+# 工作台：上传并创建批次
+@api_router.post("/workbench/batches/{user_id}/upload", response_model=ApiResponse)
+async def wb_upload_batch(
+    user_id: str,
+    files: List[UploadFile] = File(...),
+    remark: Optional[str] = Form(None),
+):
+    try:
+        result = await workbench_service.upload_and_create_batch(user_id, files, remark)
+        return ResponseHelper.success(result, "上传成功，批次已创建")
+    except HTTPException as e:
+        return ResponseHelper.error(e.detail, e.status_code)
+    except Exception as e:
+        return ResponseHelper.error(f"上传失败: {str(e)}", 500)
+
+
+@api_router.get("/workbench/batches/{user_id}", response_model=ApiResponse)
+async def wb_get_batches(user_id: str, page: int = 1, limit: int = 10, status: Optional[str] = None):
+    try:
+        data = workbench_service.get_batches(user_id, page, limit, status)
+        return ResponseHelper.success(data, "获取批次列表成功")
+    except HTTPException as e:
+        return ResponseHelper.error(e.detail, e.status_code)
+    except Exception as e:
+        return ResponseHelper.error(f"获取批次列表失败: {str(e)}", 500)
+
+
+@api_router.get("/workbench/batch/{user_id}/{batch_id}", response_model=ApiResponse)
+async def wb_get_batch_detail(user_id: str, batch_id: str):
+    try:
+        data = workbench_service.get_batch_detail(user_id, batch_id)
+        return ResponseHelper.success(data, "获取批次详情成功")
+    except HTTPException as e:
+        return ResponseHelper.error(e.detail, e.status_code)
+    except Exception as e:
+        return ResponseHelper.error(f"获取批次详情失败: {str(e)}", 500)
+
+
+@api_router.get("/workbench/batch/{user_id}/{batch_id}/invoices", response_model=ApiResponse)
+async def wb_get_batch_invoices(
+    user_id: str,
+    batch_id: str,
+    page: int = 1,
+    limit: int = 10,
+    keyword: Optional[str] = None,
+    recognition_status: Optional[int] = None,
+):
+    try:
+        data = workbench_service.get_batch_invoices(user_id, batch_id, page, limit, keyword, recognition_status)
+        return ResponseHelper.success(data, "获取批次发票列表成功")
+    except HTTPException as e:
+        return ResponseHelper.error(e.detail, e.status_code)
+    except Exception as e:
+        return ResponseHelper.error(f"获取批次发票列表失败: {str(e)}", 500)
+
+
+@api_router.get("/workbench/invoices/{user_id}", response_model=ApiResponse)
+async def wb_get_invoice_history(
+    user_id: str,
+    page: int = 1,
+    limit: int = 20,
+    keyword: Optional[str] = None,
+    batch_id: Optional[str] = None,
+    recognition_status: Optional[int] = None,
+    date_from: Optional[str] = None,
+    date_to: Optional[str] = None,
+):
+    try:
+        data = workbench_service.get_invoice_history(
+            user_id=user_id,
+            page=page,
+            limit=limit,
+            keyword=keyword,
+            batch_id=batch_id,
+            recognition_status=recognition_status,
+            date_from=date_from,
+            date_to=date_to,
+        )
+        return ResponseHelper.success(data, "获取历史清单成功")
+    except HTTPException as e:
+        return ResponseHelper.error(e.detail, e.status_code)
+    except Exception as e:
+        return ResponseHelper.error(f"获取历史清单失败: {str(e)}", 500)
+
+
+@api_router.get("/workbench/invoice/{user_id}/{invoice_id}", response_model=ApiResponse)
+async def wb_get_invoice_detail(user_id: str, invoice_id: str):
+    try:
+        data = workbench_service.get_invoice_detail(user_id, invoice_id)
+        return ResponseHelper.success(data, "获取发票详情成功")
+    except HTTPException as e:
+        return ResponseHelper.error(e.detail, e.status_code)
+    except Exception as e:
+        return ResponseHelper.error(f"获取发票详情失败: {str(e)}", 500)
+
+
+@api_router.get("/workbench/invoice/{user_id}/{invoice_id}/steps", response_model=ApiResponse)
+async def wb_get_invoice_steps(user_id: str, invoice_id: str):
+    try:
+        data = workbench_service.get_invoice_steps(user_id, invoice_id)
+        return ResponseHelper.success(data, "获取处理步骤成功")
+    except HTTPException as e:
+        return ResponseHelper.error(e.detail, e.status_code)
+    except Exception as e:
+        return ResponseHelper.error(f"获取处理步骤失败: {str(e)}", 500)
+
+
+@api_router.post("/workbench/invoice/{user_id}/{invoice_id}/retry", response_model=ApiResponse)
+async def wb_retry_invoice(user_id: str, invoice_id: str):
+    try:
+        data = await workbench_service.rerun_invoice(user_id, invoice_id)
+        return ResponseHelper.success(data, "重试识别成功")
+    except HTTPException as e:
+        return ResponseHelper.error(e.detail, e.status_code)
+    except Exception as e:
+        return ResponseHelper.error(f"重试识别失败: {str(e)}", 500)
+
+
+@api_router.post("/workbench/batch/{user_id}/{batch_id}/retry", response_model=ApiResponse)
+async def wb_retry_batch(user_id: str, batch_id: str):
+    try:
+        data = await workbench_service.rerun_batch(user_id, batch_id)
+        return ResponseHelper.success(data, "批次重试识别完成")
+    except HTTPException as e:
+        return ResponseHelper.error(e.detail, e.status_code)
+    except Exception as e:
+        return ResponseHelper.error(f"批次重试识别失败: {str(e)}", 500)
+
+
+@api_router.delete("/workbench/invoice/{user_id}/{invoice_id}", response_model=ApiResponse)
+async def wb_delete_invoice(user_id: str, invoice_id: str):
+    try:
+        data = workbench_service.delete_invoice(user_id, invoice_id)
+        return ResponseHelper.success(data, "删除发票成功")
+    except HTTPException as e:
+        return ResponseHelper.error(e.detail, e.status_code)
+    except Exception as e:
+        return ResponseHelper.error(f"删除发票失败: {str(e)}", 500)
+
+
+@api_router.delete("/workbench/batch/{user_id}/{batch_id}", response_model=ApiResponse)
+async def wb_delete_batch(user_id: str, batch_id: str):
+    try:
+        data = workbench_service.delete_batch(user_id, batch_id)
+        return ResponseHelper.success(data, "删除批次成功")
+    except HTTPException as e:
+        return ResponseHelper.error(e.detail, e.status_code)
+    except Exception as e:
+        return ResponseHelper.error(f"删除批次失败: {str(e)}", 500)
+
+
+@api_router.delete("/workbench/history/{user_id}/all", response_model=ApiResponse)
+async def wb_clear_history(user_id: str):
+    try:
+        data = workbench_service.clear_all_history(user_id)
+        return ResponseHelper.success(data, "历史记录已清空")
+    except HTTPException as e:
+        return ResponseHelper.error(e.detail, e.status_code)
+    except Exception as e:
+        return ResponseHelper.error(f"清空历史失败: {str(e)}", 500)
+
+
+@api_router.get("/workbench/overview/{user_id}", response_model=ApiResponse)
+async def wb_overview(user_id: str):
+    try:
+        data = workbench_service.get_overview_stats(user_id)
+        return ResponseHelper.success(data, "获取总览统计成功")
+    except HTTPException as e:
+        return ResponseHelper.error(e.detail, e.status_code)
+    except Exception as e:
+        return ResponseHelper.error(f"获取总览统计失败: {str(e)}", 500)
 
 
 @api_router.post("/recognize/{user_id}/unrecognized", response_model=ApiResponse)
