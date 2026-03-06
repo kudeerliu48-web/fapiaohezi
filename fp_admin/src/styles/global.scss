@@ -1,0 +1,58 @@
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+}
+
+#app {
+  width: 100%;
+  height: 100vh;
+}
+
+.dashboard-card {
+  margin-bottom: 20px;
+}
+
+.chart-container {
+  width: 100%;
+  height: 400px;
+}
+
+.table-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.pagination-container {
+  margin-top: 20px;
+  text-align: right;
+}
+
+.upload-dialog {
+  .el-upload-dragger {
+    width: 100%;
+    height: 200px;
+  }
+}
+
+// 表格网格样式增强
+.el-table {
+  th.el-table__cell, td.el-table__cell {
+    border-right: 1px solid #EBEEF5;
+    border-bottom: 1px solid #EBEEF5;
+  }
+  
+  th.el-table__cell {
+    background-color: #F5F7FA;
+    color: #606266;
+    font-weight: 600;
+  }
+  
+  // 最后一列去掉右边框
+  th.el-table__cell:last-child,
+  td.el-table__cell:last-child {
+    border-right: none;
+  }
+}
