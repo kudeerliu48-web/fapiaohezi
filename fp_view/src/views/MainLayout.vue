@@ -1,6 +1,5 @@
 <template>
   <div class="main-layout">
-    <!-- 顶部导航栏 -->
     <el-menu
       :default-active="activeMenu"
       mode="horizontal"
@@ -16,9 +15,9 @@
       </el-menu-item>
       <el-menu-item index="/invoice">
         <i class="el-icon-document"></i>
-        <span slot="title">发票整理</span>
+        <span slot="title">发票工作台</span>
       </el-menu-item>
-      
+
       <div class="right-menu">
         <span class="user-info" v-if="currentUser">
           <i class="el-icon-avatar"></i>
@@ -30,7 +29,6 @@
       </div>
     </el-menu>
 
-    <!-- 主内容区 -->
     <div class="main-content">
       <router-view />
     </div>
@@ -42,13 +40,13 @@ export default {
   name: 'MainLayout',
   data() {
     return {
-      currentUser: null
+      currentUser: null,
     }
   },
   computed: {
     activeMenu() {
       return this.$route.path
-    }
+    },
   },
   created() {
     this.checkUser()
@@ -64,15 +62,15 @@ export default {
       this.$confirm('确定要退出登录吗？', '提示', {
         confirmButtonText: '确定',
         cancelButtonText: '取消',
-        type: 'warning'
+        type: 'warning',
       }).then(() => {
         localStorage.removeItem('user')
         localStorage.removeItem('token')
         this.$router.push('/login')
         this.$message.success('已退出登录')
       })
-    }
-  }
+    },
+  },
 }
 </script>
 
@@ -85,20 +83,23 @@ export default {
 .top-menu {
   display: flex;
   justify-content: space-between;
-  
+  padding: 0 20px;
+
   .right-menu {
     margin-left: auto;
+    margin-right: 48px;
     display: flex;
     align-items: center;
-    
+
     .user-info {
       color: #fff;
-      margin-right: 20px;
+      margin-right: 16px;
       font-size: 14px;
     }
-    
+
     ::v-deep .el-button--text {
       color: #ffd04b;
+      padding: 0;
     }
   }
 }

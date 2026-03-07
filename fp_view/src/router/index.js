@@ -41,7 +41,7 @@ const routes = [
         name: 'Invoice',
         component: Invoice,
         meta: {
-          title: '发票整理',
+          title: '发票工作台',
           requiresAuth: true
         }
       }

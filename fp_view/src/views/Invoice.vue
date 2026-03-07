@@ -58,13 +58,13 @@
                   </el-select>
                 </el-form-item>
                 <el-form-item>
-                  <el-button type="primary" :loading="emailPulling" @click="startEmailPush">开始拉取</el-button>
+                  <el-button type="primary" :loading="emailSubmitting" @click="startEmailPush">开始拉取</el-button>
                 </el-form-item>
               </el-form>
             </div>
 
             <!-- 统计卡片 -->
-            <div v-if="emailJobId" class="email-stats">
+            <div v-if="emailTask && emailTask.status !== 'not_found'" class="email-stats">
               <el-row :gutter="12">
                 <el-col :span="6">
                   <div class="stat-card">
@@ -94,7 +94,7 @@
             </div>
 
             <!-- 进度条 -->
-            <div v-if="emailPulling || emailStats.downloaded > 0" class="email-progress">
+            <div v-if="emailTask && emailTask.status !== 'not_found'" class="email-progress">
               <el-progress 
                 :percentage="getEmailProgress()" 
                 :status="getEmailProgress() === 100 ? 'success' : null"
@@ -114,10 +114,11 @@
       </el-tabs>
 
       <div class="quick-actions">
-        <el-button type="primary" :loading="recognizing" @click="startRecognizeUnrecognized()">开始识别</el-button>
-        <el-button icon="el-icon-refresh" @click="loadAll">刷新</el-button>
+        <el-button type="primary" :loading="recognizeSubmitting" @click="startRecognizeUnrecognized()">开始识别</el-button>
+        <el-button icon="el-icon-refresh" @click="manualRefresh">刷新</el-button>
         <el-button type="warning" :disabled="!selectedRows.length" :loading="retryingRows" @click="retrySelected">重试选中</el-button>
         <el-button type="danger" icon="el-icon-delete" :loading="clearing" @click="confirmClearAll">清空历史</el-button>
+        <span class="hint-text">任务提交后请手动点击“刷新”查看最新状态</span>
       </div>
     </el-card>
 
@@ -253,7 +254,6 @@ import { workbenchAPI } from '@/api/workbench'
 import InvoiceDetailDialog from '@/components/InvoiceDetailDialog.vue'
 import TaskProgressPanel from '@/components/TaskProgressPanel.vue'
 import {
-  INVOICE_STATUS,
   INVOICE_RUNTIME_STATUS,
   BATCH_STATUS,
 } from '@/constants/workbench'
@@ -283,9 +283,10 @@ export default {
       tableLoading: false,
       clearing: false,
       retryingRows: false,
+      emailSubmitting: false,
+      recognizeSubmitting: false,
       detailVisible: false,
       detailLoading: false,
-      detailRefreshLock: false,
       currentInvoice: {},
       currentSteps: [],
       filters: {
@@ -304,8 +305,6 @@ export default {
         authCode: '',
         rangeKey: '3m',
       },
-      emailPulling: false,
-      emailJobId: null,
       emailStats: {
         matched_messages: 0,
         downloaded: 0,
@@ -313,18 +312,11 @@ export default {
         failed: 0,
       },
       emailLogs: [],
-      emailPollTimer: null,
-
-      recognizing: false,
-      recognizeJobId: null,
-      recognizeLogs: [],
-      recognizePollTimer: null,
 
       recognizeTask: null,
       emailTask: null,
       showRecognizeTaskPanel: true,
       showEmailTaskPanel: true,
-      pollingRefreshLock: false,
     }
   },
   computed: {
@@ -355,16 +347,8 @@ export default {
       return
     }
     await this.loadAll()
-    await this.loadLatestTasks()
-  },
-  beforeDestroy() {
-    this.stopPolling('email')
-    this.stopPolling('recognize')
   },
   methods: {
-    statusMeta(status) {
-      return INVOICE_STATUS[status] || { label: '未知', type: 'info' }
-    },
     runtimeStatusMeta(row) {
       const runtime = row?.runtime_status || this.mapLegacyStatus(row?.recognition_status)
       return INVOICE_RUNTIME_STATUS[runtime] || { label: '未知', type: 'info' }
@@ -390,17 +374,6 @@ export default {
       if (!val) return '-'
       return String(val).replace('T', ' ').slice(0, 19)
     },
-    extractResponseData(res) {
-      if (!res) return {}
-      if (res.data && typeof res.data === 'object') {
-        return res.data.data || res.data
-      }
-      return res
-    },
-    extractJobId(res) {
-      const payload = this.extractResponseData(res)
-      return payload?.job_id || ''
-    },
     buildInvoiceQueryParams() {
       const [dateFrom, dateTo] = this.filters.dateRange || []
       return {
@@ -413,48 +386,12 @@ export default {
         date_to: dateTo ? `${dateTo}T23:59:59` : undefined,
       }
     },
-    async refreshCurrentDetailSilently() {
-      if (!this.detailVisible || !this.currentInvoice?.id || this.detailRefreshLock) return
-      this.detailRefreshLock = true
-      try {
-        const [invoice, steps] = await Promise.all([
-          workbenchAPI.getInvoiceDetail(this.userId, this.currentInvoice.id),
-          workbenchAPI.getInvoiceSteps(this.userId, this.currentInvoice.id),
-        ])
-        this.currentInvoice = invoice || this.currentInvoice
-        this.currentSteps = steps || this.currentSteps
-      } catch (_) {
-        // 轮询中静默忽略
-      } finally {
-        this.detailRefreshLock = false
-      }
+    async loadAll(resetPage = false) {
+      await Promise.all([this.loadOverview(), this.loadBatches(), this.loadInvoiceList(resetPage), this.loadLatestTasks()])
     },
-    async refreshResultDuringPolling() {
-      if (this.pollingRefreshLock) return
-      this.pollingRefreshLock = true
-      try {
-        const [overview, listData] = await Promise.all([
-          workbenchAPI.getOverview(this.userId),
-          workbenchAPI.getInvoices(this.userId, this.buildInvoiceQueryParams()),
-        ])
-        this.overview = overview || this.overview
-        this.invoiceList = listData.invoices || []
-        this.invoicePagination.total = listData.total || 0
-        if (listData.task_summary && listData.task_summary.status !== 'not_found') {
-          this.recognizeTask = listData.task_summary
-        }
-      } catch (_) {
-        // 轮询刷新失败时不打断任务，也不弹窗
-      } finally {
-        this.pollingRefreshLock = false
-      }
-      await this.refreshCurrentDetailSilently()
+    async manualRefresh() {
+      await this.loadAll(false)
     },
-
-    async loadAll() {
-      await Promise.all([this.loadOverview(), this.loadBatches(), this.loadInvoiceList(true)])
-    },
-
     async loadLatestTasks() {
       try {
         const [recognizeLatest, emailLatest] = await Promise.all([
@@ -465,10 +402,8 @@ export default {
         if (recognizeLatest && recognizeLatest.status && recognizeLatest.status !== 'not_found') {
           this.recognizeTask = recognizeLatest
           this.showRecognizeTaskPanel = true
-          if (['queued', 'running'].includes(recognizeLatest.status) && recognizeLatest.job_id) {
-            this.recognizing = true
-            this.startPolling('recognize', recognizeLatest.job_id)
-          }
+        } else {
+          this.recognizeTask = null
         }
 
         if (emailLatest && emailLatest.status && emailLatest.status !== 'not_found') {
@@ -481,13 +416,14 @@ export default {
             failed: emailLatest.failed || 0,
           }
           this.emailLogs = emailLatest.logs || []
-          if (['queued', 'running'].includes(emailLatest.status) && emailLatest.job_id) {
-            this.emailPulling = true
-            this.startPolling('email', emailLatest.job_id)
-          }
+        } else {
+          this.emailTask = null
+          this.emailStats = { matched_messages: 0, downloaded: 0, imported: 0, failed: 0 }
+          this.emailLogs = []
         }
       } catch (_) {
-        // 页面初始加载时忽略任务恢复失败
+        this.recognizeTask = null
+        this.emailTask = null
       }
     },
 
@@ -558,12 +494,17 @@ export default {
       this.uploading = true
       try {
         const result = await workbenchAPI.uploadBatch(this.userId, this.pendingFiles)
-        this.$message.success('上传成功，批次已创建')
+        const createdCount = Number(result?.created_count || (result?.created_invoices || []).length || 0)
+        const failedCount = Number(result?.failed_count || (result?.failed_files || []).length || 0)
+        if (createdCount > 0) {
+          this.$message.success(`上传成功，已生成 ${createdCount} 条待识别记录`)
+        }
+        if (failedCount > 0) {
+          const firstError = result?.failed_files?.[0]?.error_message || '部分文件处理失败'
+          this.$message.warning(`有 ${failedCount} 个文件上传失败：${firstError}`)
+        }
         this.pendingFiles = []
-        await this.loadAll()
-
-        const batchId = result?.batch?.id || ''
-        await this.startRecognizeUnrecognized(batchId)
+        await this.loadAll(false)
       } catch (e) {
         this.$message.error(`上传失败：${e.message}`)
       } finally {
@@ -575,9 +516,10 @@ export default {
       this.detailVisible = true
       this.detailLoading = true
       try {
+        const invoiceId = row.invoice_id || row.id
         const [invoice, steps] = await Promise.all([
-          workbenchAPI.getInvoiceDetail(this.userId, row.id),
-          workbenchAPI.getInvoiceSteps(this.userId, row.id),
+          workbenchAPI.getInvoiceDetail(this.userId, invoiceId),
+          workbenchAPI.getInvoiceSteps(this.userId, invoiceId),
         ])
         this.currentInvoice = invoice || {}
         this.currentSteps = steps || []
@@ -591,9 +533,9 @@ export default {
     async retryInvoice(row) {
       try {
         await this.$confirm('确定重新执行该发票识别流程吗？', '确认重试', { type: 'warning' })
-        await workbenchAPI.retryInvoice(this.userId, row.id)
-        this.$message.success('已重新执行识别')
-        await this.loadAll()
+        const invoiceId = row.invoice_id || row.id
+        await workbenchAPI.retryInvoice(this.userId, invoiceId)
+        this.$message.success('已提交重试任务，请手动点击“刷新”查看状态')
       } catch (e) {
         if (e !== 'cancel') {
           this.$message.error(`重试失败：${e.message || e}`)
@@ -610,10 +552,10 @@ export default {
         await this.$confirm(`确定重试选中的 ${this.selectedRows.length} 条发票吗？`, '批量重试', { type: 'warning' })
         this.retryingRows = true
         for (const row of this.selectedRows) {
-          await workbenchAPI.retryInvoice(this.userId, row.id)
+          const invoiceId = row.invoice_id || row.id
+          await workbenchAPI.retryInvoice(this.userId, invoiceId)
         }
-        this.$message.success('批量重试完成')
-        await this.loadAll()
+        this.$message.success('批量重试任务已提交，请手动点击“刷新”查看状态')
       } catch (e) {
         if (e !== 'cancel') {
           this.$message.error(`批量重试失败：${e.message || e}`)
@@ -626,9 +568,10 @@ export default {
     async deleteInvoice(row) {
       try {
         await this.$confirm('删除后将同时清理该发票步骤调试数据，是否继续？', '确认删除', { type: 'warning' })
-        await workbenchAPI.deleteInvoice(this.userId, row.id)
+        const invoiceId = row.invoice_id || row.id
+        await workbenchAPI.deleteInvoice(this.userId, invoiceId)
         this.$message.success('删除成功')
-        await this.loadAll()
+        await this.loadAll(false)
       } catch (e) {
         if (e !== 'cancel') {
           this.$message.error(`删除失败：${e.message || e}`)
@@ -650,42 +593,13 @@ export default {
         this.clearing = true
         await workbenchAPI.clearAllHistory(this.userId)
         this.$message.success('历史记录已清空')
-        await this.loadAll()
+        await this.loadAll(false)
       } catch (e) {
         if (e !== 'cancel') {
           this.$message.error(`清空失败：${e.message || e}`)
         }
       } finally {
         this.clearing = false
-      }
-    },
-
-    // 统一轮询控制
-    startPolling(type, jobId) {
-      if (!jobId) return
-      this.stopPolling(type)
-      if (type === 'email') {
-        this.emailJobId = jobId
-        this.checkEmailStatus().catch(() => {})
-        this.emailPollTimer = setInterval(() => {
-          this.checkEmailStatus().catch(() => {})
-        }, 1000)
-        return
-      }
-      this.recognizeJobId = jobId
-      this.checkRecognizeStatus().catch(() => {})
-      this.recognizePollTimer = setInterval(() => {
-        this.checkRecognizeStatus().catch(() => {})
-      }, 1000)
-    },
-    stopPolling(type) {
-      if (type === 'email' && this.emailPollTimer) {
-        clearInterval(this.emailPollTimer)
-        this.emailPollTimer = null
-      }
-      if (type === 'recognize' && this.recognizePollTimer) {
-        clearInterval(this.recognizePollTimer)
-        this.recognizePollTimer = null
       }
     },
 
@@ -697,8 +611,7 @@ export default {
         return
       }
 
-      this.emailPulling = true
-      this.emailJobId = null
+      this.emailSubmitting = true
       this.emailStats = { matched_messages: 0, downloaded: 0, imported: 0, failed: 0 }
       this.emailLogs = []
 
@@ -706,43 +619,18 @@ export default {
         const task = await workbenchAPI.startEmailPushTask(this.userId, { rangeKey, mailbox, authCode })
         this.emailTask = task
         this.showEmailTaskPanel = true
-        this.emailJobId = task.job_id
-        if (!this.emailJobId) {
-          throw new Error('未获取到邮箱任务ID')
+        this.emailStats = {
+          matched_messages: task.matched_messages || 0,
+          downloaded: task.downloaded || 0,
+          imported: task.completed || task.imported || 0,
+          failed: task.failed || 0,
         }
-        this.$message.success('邮箱拉取任务已启动')
-        this.startPolling('email', this.emailJobId)
+        this.emailLogs = task.logs || []
+        this.$message.success('邮箱拉取任务已提交，请稍后点击“刷新”查看最新结果')
       } catch (e) {
         this.$message.error(`启动邮箱推送失败：${e.message}`)
-        this.emailPulling = false
-      }
-    },
-
-    async checkEmailStatus() {
-      if (!this.emailJobId) return
-      const task = await workbenchAPI.getEmailPushTaskStatus(this.userId, this.emailJobId)
-      this.emailTask = task
-      this.emailPulling = ['queued', 'running'].includes(task.status)
-      this.emailStats = {
-        matched_messages: task.matched_messages || 0,
-        downloaded: task.downloaded || 0,
-        imported: task.completed || task.imported || 0,
-        failed: task.failed || 0,
-      }
-      this.emailLogs = task.logs || []
-
-      if (['queued', 'running'].includes(task.status)) {
-        await this.refreshResultDuringPolling()
-        return
-      }
-
-      this.stopPolling('email')
-      if (task.status === 'completed' || task.status === 'partial_success') {
-        this.$message.success('邮箱拉取完成，开始识别新导入发票')
-        await this.loadAll()
-        await this.startRecognizeUnrecognized()
-      } else if (task.status === 'failed') {
-        this.$message.error('邮箱拉取失败')
+      } finally {
+        this.emailSubmitting = false
       }
     },
 
@@ -766,46 +654,13 @@ export default {
         const task = await workbenchAPI.recognizeUnrecognized(this.userId, batchId)
         this.recognizeTask = task
         this.showRecognizeTaskPanel = true
-        this.recognizeJobId = task.job_id
-        if (!this.recognizeJobId) {
-          throw new Error('未获取到识别任务ID')
-        }
-
-        this.recognizing = ['queued', 'running'].includes(task.status)
-        this.recognizeLogs = task.logs || []
-        this.$message.success('识别任务已启动')
-        if (this.recognizing) {
-          this.startPolling('recognize', this.recognizeJobId)
-        }
+        this.$message.success('已提交识别任务，请稍后点击“刷新”查看最新状态')
       } catch (e) {
         if (e.message && (e.message.includes('没有待识别') || e.message.includes('未识别'))) {
           this.$message.info('没有待识别的发票')
         } else {
           this.$message.error(`启动识别失败：${e.message}`)
         }
-      }
-    },
-
-    async checkRecognizeStatus() {
-      if (!this.recognizeJobId) return
-      const task = await workbenchAPI.getRecognizeStatus(this.userId, this.recognizeJobId)
-      this.recognizeTask = task
-      this.recognizing = ['queued', 'running'].includes(task.status)
-      this.recognizeLogs = task.logs || []
-
-      await this.refreshResultDuringPolling()
-
-      if (this.recognizing) return
-
-      this.stopPolling('recognize')
-      if (task.status === 'completed') {
-        this.$message.success('识别任务完成')
-        await this.loadAll()
-      } else if (task.status === 'partial_success') {
-        this.$message.warning('识别任务完成，存在失败项')
-        await this.loadAll()
-      } else if (task.status === 'failed') {
-        this.$message.error('识别任务失败')
       }
     },
   },
@@ -902,6 +757,13 @@ export default {
   display: flex;
   gap: 8px;
   align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.hint-text {
+  font-size: 12px;
+  color: #909399;
+  line-height: 32px;
 }
 
 .upload-tabs {

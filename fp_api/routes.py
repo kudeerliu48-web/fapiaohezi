@@ -85,7 +85,8 @@ async def upload_file(user_id: str, file: UploadFile = File(...)):
         return ResponseHelper.error(f"删除用户失败: {str(e)}", 500)
 
 
-# 宸ヤ綔鍙帮細涓婁紶骞跺垱寤烘壒娆?@api_router.post("/workbench/batches/{user_id}/upload", response_model=ApiResponse)
+# 工作台：上传并创建批次
+@api_router.post("/workbench/batches/{user_id}/upload", response_model=ApiResponse)
 async def wb_upload_batch(
     user_id: str,
     files: List[UploadFile] = File(...),
@@ -93,7 +94,7 @@ async def wb_upload_batch(
 ):
     try:
         result = await workbench_service.upload_and_create_batch(user_id, files, remark)
-        return ResponseHelper.success(result, "涓婁紶鎴愬姛锛屾壒娆″凡鍒涘缓")
+        return ResponseHelper.success(result, "Batch created")
     except HTTPException as e:
         return ResponseHelper.error(e.detail, e.status_code)
     except Exception as e:
@@ -267,7 +268,7 @@ async def wb_recognize_unrecognized(payload: Dict[str, Any] = Body(...)):
             return ResponseHelper.error("user_id不能为空", 400)
         user_service.get_user_info(user_id)
         task = start_recognize_unrecognized(user_id, batch_id=batch_id)
-        return ResponseHelper.success(task, "识别任务已开始")
+        return ResponseHelper.success(task, "Task submitted")
     except HTTPException as e:
         return ResponseHelper.error(e.detail, e.status_code)
     except Exception as e:
@@ -293,6 +294,7 @@ async def wb_recognize_latest(user_id: str, batch_id: Optional[str] = None):
 
 
 @api_router.post("/recognize/{user_id}/unrecognized", response_model=ApiResponse)
+# Deprecated: legacy API????? /api/workbench/recognize-unrecognized
 async def recognize_unrecognized(user_id: str, batch_id: Optional[str] = None):
     """提交所有未识别发票（recognition_status=0）进行识别"""
     try:
@@ -303,6 +305,7 @@ async def recognize_unrecognized(user_id: str, batch_id: Optional[str] = None):
 
 
 @api_router.get("/recognize/status/{job_id}", response_model=ApiResponse)
+# Deprecated: legacy API????? /api/workbench/recognize-status/{job_id}
 async def recognize_status(job_id: str, user_id: Optional[str] = None):
     """查询识别任务状态"""
     try:
@@ -310,6 +313,7 @@ async def recognize_status(job_id: str, user_id: Optional[str] = None):
     except Exception as e:
         return ResponseHelper.error(f"删除用户失败: {str(e)}", 500)
 @api_router.get("/invoices/{user_id}", response_model=ApiResponse)
+# Deprecated: legacy API????? /api/workbench/invoices/{user_id}
 async def get_invoices(user_id: str, page: int = 1, limit: int = 10, keyword: Optional[str] = None, recognized_only: bool = False):
     """鑾峰彇鐢ㄦ埛鍙戠エ鍒楄〃"""
     try:
@@ -468,7 +472,8 @@ async def get_invoice_detail(user_id: str, invoice_id: str):
     except Exception as e:
         return ResponseHelper.error(f"删除用户失败: {str(e)}", 500)
 
-# 绠＄悊鍛樼浉鍏宠矾鐢?@api_router.get("/admin/users", response_model=ApiResponse)
+# 管理员相关路由
+@api_router.get("/admin/users", response_model=ApiResponse)
 async def get_all_users(page: int = 1, limit: int = 10):
     """鑾峰彇鎵€鏈夌敤鎴峰垪琛紙绠＄悊鍛橈級"""
     try:

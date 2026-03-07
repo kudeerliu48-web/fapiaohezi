@@ -76,11 +76,6 @@ export const workbenchAPI = {
     }))
   },
 
-  // 查询识别任务状态
-  async getRecognizeStatus(userId, jobId) {
-    return unwrap(await api.get(`/workbench/recognize-status/${jobId}`, { params: { user_id: userId } }))
-  },
-
   // 查询最近识别任务
   async getLatestRecognizeTask(userId, batchId = '') {
     return unwrap(await api.get(`/workbench/recognize-latest/${userId}`, {
@@ -98,14 +93,6 @@ export const workbenchAPI = {
     return unwrap(await api.post(`/workbench/email-push/${userId}/start`, formData, {
       timeout: 60000,
       headers: { 'Content-Type': 'multipart/form-data' },
-    }))
-  },
-
-  // 查询邮箱拉取任务状态
-  async getEmailPushTaskStatus(userId, jobId) {
-    return unwrap(await api.get(`/workbench/email-push/status/${jobId}`, {
-      params: { user_id: userId },
-      timeout: 30000,
     }))
   },
 
