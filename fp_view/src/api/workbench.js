@@ -100,6 +100,13 @@ export const workbenchAPI = {
   async getLatestEmailPushTask(userId) {
     return unwrap(await api.get(`/workbench/email-push/latest/${userId}`))
   },
+
+  // 查询邮箱拉取任务状态
+  async getEmailPushTaskStatus(jobId, userId = '') {
+    return unwrap(await api.get(`/workbench/email-push/status/${jobId}`, {
+      params: { user_id: userId || undefined },
+    }))
+  },
 }
 
 export default workbenchAPI

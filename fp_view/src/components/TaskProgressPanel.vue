@@ -1,4 +1,4 @@
-﻿<template>
+<template>
   <el-card v-if="task" class="task-progress-panel" shadow="never">
     <div class="panel-head">
       <div class="head-left">
@@ -20,17 +20,46 @@
 
     <el-progress :percentage="percent" :status="progressStatus" :stroke-width="10" />
 
+    <div v-if="isEmailTask" class="panel-stats email-stats">
+      <span>扫描 {{ scanned }}</span>
+      <span>匹配 {{ matched }}</span>
+      <span>下载 {{ downloaded }}</span>
+      <span>导入 {{ imported }}</span>
+      <span>识别 {{ recognized }}</span>
+    </div>
+
+    <div v-if="isEmailTask && stageLabel" class="panel-line">
+      当前阶段：{{ stageLabel }}
+    </div>
+    <div v-if="isEmailTask && task.current_email_subject" class="panel-line">
+      当前邮件：{{ task.current_email_subject }}
+    </div>
+    <div v-if="isEmailTask && task.current_attachment_name" class="panel-line">
+      当前附件：{{ task.current_attachment_name }}
+    </div>
     <div v-if="task.current_invoice_name" class="panel-line">
       当前处理：{{ task.current_invoice_name }}
     </div>
     <div v-if="latestLog" class="panel-line latest-log">
       最新日志：{{ latestLog }}
     </div>
+
+    <div v-if="visibleLogs.length" class="panel-logs">
+      <div class="logs-title">最近日志</div>
+      <div
+        v-for="(log, index) in visibleLogs"
+        :key="index"
+        class="log-item"
+        :class="{ error: isErrorLog(log) }"
+      >
+        {{ log }}
+      </div>
+    </div>
   </el-card>
 </template>
 
 <script>
-import { TASK_STATUS, TASK_TYPE } from '@/constants/workbench'
+import { TASK_STATUS, TASK_TYPE, EMAIL_STAGE } from '@/constants/workbench'
 
 export default {
   name: 'TaskProgressPanel',
@@ -75,6 +104,40 @@ export default {
       if (!Array.isArray(logs) || !logs.length) return ''
       return logs[logs.length - 1]
     },
+    isEmailTask() {
+      return this.task?.task_type === 'email_pull'
+    },
+    stageLabel() {
+      if (!this.isEmailTask) return ''
+      const stage = this.task?.current_stage || ''
+      return EMAIL_STAGE[stage] || stage
+    },
+    visibleLogs() {
+      const logs = this.task?.logs || []
+      if (!Array.isArray(logs)) return []
+      return logs.slice(-12).reverse()
+    },
+    scanned() {
+      return Number(this.task?.scanned_emails || this.task?.total_messages || 0)
+    },
+    matched() {
+      return Number(this.task?.matched_emails || this.task?.matched_messages || 0)
+    },
+    downloaded() {
+      return Number(this.task?.downloaded_attachments || this.task?.downloaded || 0)
+    },
+    imported() {
+      return Number(this.task?.imported_invoices || this.task?.imported || 0)
+    },
+    recognized() {
+      return Number(this.task?.recognized_invoices || 0)
+    },
+  },
+  methods: {
+    isErrorLog(log) {
+      const text = String(log || '')
+      return text.includes('错误') || text.includes('失败')
+    },
   },
 }
 </script>
@@ -110,6 +173,11 @@ export default {
   color: #606266;
   font-size: 12px;
   margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.email-stats {
+  margin-top: 8px;
 }
 
 .panel-line {
@@ -121,5 +189,29 @@ export default {
 
 .latest-log {
   color: #909399;
+}
+
+.panel-logs {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid #ebeef5;
+  max-height: 220px;
+  overflow-y: auto;
+}
+
+.logs-title {
+  font-size: 12px;
+  color: #606266;
+  margin-bottom: 6px;
+}
+
+.log-item {
+  font-size: 12px;
+  line-height: 1.6;
+  color: #606266;
+}
+
+.log-item.error {
+  color: #f56c6c;
 }
 </style>

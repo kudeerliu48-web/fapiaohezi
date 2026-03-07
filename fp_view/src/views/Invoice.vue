@@ -66,31 +66,50 @@
             <!-- 统计卡片 -->
             <div v-if="emailTask && emailTask.status !== 'not_found'" class="email-stats">
               <el-row :gutter="12">
-                <el-col :span="6">
+                <el-col :span="4">
+                  <div class="stat-card">
+                    <div class="stat-label">已扫描邮件</div>
+                    <div class="stat-value">{{ emailStats.scanned_emails }}</div>
+                  </div>
+                </el-col>
+                <el-col :span="4">
                   <div class="stat-card">
                     <div class="stat-label">匹配邮件数</div>
-                    <div class="stat-value">{{ emailStats.matched_messages }}</div>
+                    <div class="stat-value">{{ emailStats.matched_emails }}</div>
                   </div>
                 </el-col>
-                <el-col :span="6">
+                <el-col :span="4">
                   <div class="stat-card">
                     <div class="stat-label">已下载附件</div>
-                    <div class="stat-value">{{ emailStats.downloaded }}</div>
+                    <div class="stat-value">{{ emailStats.downloaded_attachments }}</div>
                   </div>
                 </el-col>
-                <el-col :span="6">
+                <el-col :span="4">
                   <div class="stat-card">
                     <div class="stat-label">已成功导入</div>
-                    <div class="stat-value success">{{ emailStats.imported }}</div>
+                    <div class="stat-value success">{{ emailStats.imported_invoices }}</div>
                   </div>
                 </el-col>
-                <el-col :span="6">
+                <el-col :span="4">
+                  <div class="stat-card">
+                    <div class="stat-label">已触发识别</div>
+                    <div class="stat-value">{{ emailStats.recognized_invoices }}</div>
+                  </div>
+                </el-col>
+                <el-col :span="4">
                   <div class="stat-card">
                     <div class="stat-label">失败数量</div>
-                    <div class="stat-value error">{{ emailStats.failed }}</div>
+                    <div class="stat-value error">{{ emailStats.failed_count }}</div>
                   </div>
                 </el-col>
               </el-row>
+            </div>
+
+            <div v-if="emailTask && emailTask.status !== 'not_found'" class="email-stage-card">
+              <div class="stage-line">当前状态：{{ emailTaskStatusLabel(emailTask.status) }}</div>
+              <div class="stage-line">当前阶段：{{ emailStageLabel }}</div>
+              <div class="stage-line" v-if="emailTask.current_email_subject">当前邮件：{{ emailTask.current_email_subject }}</div>
+              <div class="stage-line" v-if="emailTask.current_attachment_name">当前附件：{{ emailTask.current_attachment_name }}</div>
             </div>
 
             <!-- 进度条 -->
@@ -106,8 +125,19 @@
             <div v-if="emailLogs.length" class="email-logs">
               <div class="logs-title">处理日志</div>
               <div class="logs-content">
-                <div v-for="(log, idx) in emailLogs" :key="idx" class="log-item">{{ log }}</div>
+                <div v-for="(log, idx) in recentEmailLogs" :key="`log-${idx}`" :class="emailLogClass(log)">{{ log }}</div>
               </div>
+            </div>
+
+            <div v-if="recentEmailErrors.length" class="email-logs email-errors">
+              <div class="logs-title">错误信息</div>
+              <div class="logs-content">
+                <div v-for="(err, idx) in recentEmailErrors" :key="`err-${idx}`" class="log-item error">{{ err }}</div>
+              </div>
+            </div>
+
+            <div v-if="!emailTask || emailTask.status === 'not_found'" class="email-empty">
+              尚未启动邮箱拉取任务，填写邮箱信息后点击“开始拉取”。
             </div>
           </div>
         </el-tab-pane>
@@ -118,7 +148,7 @@
         <el-button icon="el-icon-refresh" @click="manualRefresh">刷新</el-button>
         <el-button type="warning" :disabled="!selectedRows.length" :loading="retryingRows" @click="retrySelected">重试选中</el-button>
         <el-button type="danger" icon="el-icon-delete" :loading="clearing" @click="confirmClearAll">清空历史</el-button>
-        <span class="hint-text">任务提交后请手动点击“刷新”查看最新状态</span>
+        <span class="hint-text">邮箱拉取会自动刷新进度；识别任务可手动点击“刷新”查看最新状态</span>
       </div>
     </el-card>
 
@@ -132,7 +162,7 @@
       v-if="showEmailTaskPanel && emailTask && emailTask.status !== 'not_found'"
       :task="emailTask"
       title="当前邮箱任务"
-      @close="showEmailTaskPanel = false"
+      @close="handleEmailTaskPanelClose"
     />
 
     <el-card class="operation-card" shadow="never">
@@ -256,6 +286,7 @@ import TaskProgressPanel from '@/components/TaskProgressPanel.vue'
 import {
   INVOICE_RUNTIME_STATUS,
   BATCH_STATUS,
+  EMAIL_STAGE,
 } from '@/constants/workbench'
 
 export default {
@@ -306,12 +337,18 @@ export default {
         rangeKey: '3m',
       },
       emailStats: {
-        matched_messages: 0,
-        downloaded: 0,
-        imported: 0,
-        failed: 0,
+        scanned_emails: 0,
+        matched_emails: 0,
+        downloaded_attachments: 0,
+        imported_invoices: 0,
+        recognized_invoices: 0,
+        failed_count: 0,
       },
       emailLogs: [],
+      emailErrors: [],
+      emailPollingTimer: null,
+      emailPollingJobId: '',
+      emailPollingInFlight: false,
 
       recognizeTask: null,
       emailTask: null,
@@ -337,6 +374,16 @@ export default {
       }
       return '暂无发票记录，请先上传发票开始处理'
     },
+    emailStageLabel() {
+      const stage = this.emailTask?.current_stage || ''
+      return EMAIL_STAGE[stage] || stage || '未开始'
+    },
+    recentEmailLogs() {
+      return (this.emailLogs || []).slice(-20).reverse()
+    },
+    recentEmailErrors() {
+      return (this.emailErrors || []).slice(-10).reverse()
+    },
   },
   async mounted() {
     const user = JSON.parse(localStorage.getItem('user') || '{}')
@@ -347,6 +394,9 @@ export default {
       return
     }
     await this.loadAll()
+  },
+  beforeDestroy() {
+    this.stopEmailTaskPolling()
   },
   methods: {
     runtimeStatusMeta(row) {
@@ -407,23 +457,29 @@ export default {
         }
 
         if (emailLatest && emailLatest.status && emailLatest.status !== 'not_found') {
-          this.emailTask = emailLatest
+          this.applyEmailTask(emailLatest)
           this.showEmailTaskPanel = true
-          this.emailStats = {
-            matched_messages: emailLatest.matched_messages || 0,
-            downloaded: emailLatest.downloaded || 0,
-            imported: emailLatest.completed || emailLatest.imported || 0,
-            failed: emailLatest.failed || 0,
+          if (this.isEmailTaskRunning(emailLatest.status)) {
+            this.startEmailTaskPolling(emailLatest.job_id)
           }
-          this.emailLogs = emailLatest.logs || []
         } else {
           this.emailTask = null
-          this.emailStats = { matched_messages: 0, downloaded: 0, imported: 0, failed: 0 }
+          this.emailStats = {
+            scanned_emails: 0,
+            matched_emails: 0,
+            downloaded_attachments: 0,
+            imported_invoices: 0,
+            recognized_invoices: 0,
+            failed_count: 0,
+          }
           this.emailLogs = []
+          this.emailErrors = []
+          this.stopEmailTaskPolling()
         }
       } catch (_) {
         this.recognizeTask = null
         this.emailTask = null
+        this.stopEmailTaskPolling()
       }
     },
 
@@ -444,9 +500,9 @@ export default {
       }
     },
 
-    async loadInvoiceList(resetPage = false) {
+    async loadInvoiceList(resetPage = false, silent = false) {
       if (resetPage) this.invoicePagination.page = 1
-      this.tableLoading = true
+      if (!silent) this.tableLoading = true
       try {
         const data = await workbenchAPI.getInvoices(this.userId, this.buildInvoiceQueryParams())
         this.invoiceList = data.invoices || []
@@ -457,7 +513,7 @@ export default {
       } catch (e) {
         this.$message.error(`获取历史清单失败：${e.message}`)
       } finally {
-        this.tableLoading = false
+        if (!silent) this.tableLoading = false
       }
     },
 
@@ -603,49 +659,133 @@ export default {
       }
     },
 
+    applyEmailTask(task) {
+      this.emailTask = task || null
+      this.emailStats = {
+        scanned_emails: Number(task?.scanned_emails || task?.total_messages || 0),
+        matched_emails: Number(task?.matched_emails || task?.matched_messages || 0),
+        downloaded_attachments: Number(task?.downloaded_attachments || task?.downloaded || 0),
+        imported_invoices: Number(task?.imported_invoices || task?.imported || task?.completed || 0),
+        recognized_invoices: Number(task?.recognized_invoices || 0),
+        failed_count: Number(task?.failed_count || task?.failed || 0),
+      }
+      this.emailLogs = Array.isArray(task?.logs) ? task.logs : []
+      this.emailErrors = Array.isArray(task?.errors) ? task.errors : []
+    },
+    isEmailTaskRunning(status) {
+      return ['queued', 'running'].includes(status)
+    },
+    emailTaskStatusLabel(status) {
+      const labelMap = {
+        queued: '排队中',
+        running: '处理中',
+        completed: '已完成',
+        failed: '失败',
+        partial_success: '部分成功',
+        cancelled: '已取消',
+        not_found: '任务不存在',
+      }
+      return labelMap[status] || status || '-'
+    },
+    isEmailTaskTerminal(status) {
+      return ['completed', 'failed', 'partial_success', 'cancelled'].includes(status)
+    },
+    handleEmailTaskPanelClose() {
+      this.showEmailTaskPanel = false
+      this.stopEmailTaskPolling()
+    },
+    startEmailTaskPolling(jobId) {
+      if (!jobId) return
+      if (this.emailPollingTimer && this.emailPollingJobId === jobId) return
+      this.stopEmailTaskPolling()
+      this.emailPollingJobId = jobId
+      this.pollEmailTaskStatus(jobId)
+      this.emailPollingTimer = setInterval(() => {
+        this.pollEmailTaskStatus(jobId)
+      }, 1500)
+    },
+    stopEmailTaskPolling() {
+      if (this.emailPollingTimer) {
+        clearInterval(this.emailPollingTimer)
+        this.emailPollingTimer = null
+      }
+      this.emailPollingJobId = ''
+      this.emailPollingInFlight = false
+    },
+    async pollEmailTaskStatus(jobId) {
+      if (!jobId || this.emailPollingInFlight) return
+      this.emailPollingInFlight = true
+      try {
+        const task = await workbenchAPI.getEmailPushTaskStatus(jobId, this.userId)
+        if (!task || task.status === 'not_found') {
+          this.stopEmailTaskPolling()
+          return
+        }
+        this.applyEmailTask(task)
+        this.showEmailTaskPanel = true
+        await this.loadOverview()
+        await this.loadInvoiceList(false, true)
+        if (this.isEmailTaskTerminal(task.status)) {
+          await Promise.all([this.loadBatches(), this.loadInvoiceList(false, true)])
+          this.stopEmailTaskPolling()
+          if (task.status === 'completed') {
+            this.$message.success('邮箱拉取完成，清单已自动刷新')
+          } else if (task.status === 'partial_success') {
+            this.$message.warning('邮箱拉取部分成功，请查看日志与错误信息')
+          } else if (task.status === 'failed') {
+            this.$message.error('邮箱拉取失败，请查看错误信息')
+          }
+        }
+      } catch (_) {
+        // 轮询失败时保持静默，下一个周期继续尝试
+      } finally {
+        this.emailPollingInFlight = false
+      }
+    },
     // 邮箱拉取
     async startEmailPush() {
       const { mailbox, authCode, rangeKey } = this.emailForm
-      if (!mailbox || !authCode) {
-        this.$message.warning('请填写邮箱地址和授权码')
+      if (!authCode) {
+        this.$message.warning('请填写授权码')
         return
       }
 
       this.emailSubmitting = true
-      this.emailStats = { matched_messages: 0, downloaded: 0, imported: 0, failed: 0 }
       this.emailLogs = []
+      this.emailErrors = []
+      this.applyEmailTask({
+        task_type: 'email_pull',
+        status: 'queued',
+        current_stage: 'queued',
+        logs: ['任务创建中...'],
+      })
 
       try {
         const task = await workbenchAPI.startEmailPushTask(this.userId, { rangeKey, mailbox, authCode })
-        this.emailTask = task
+        this.applyEmailTask(task)
         this.showEmailTaskPanel = true
-        this.emailStats = {
-          matched_messages: task.matched_messages || 0,
-          downloaded: task.downloaded || 0,
-          imported: task.completed || task.imported || 0,
-          failed: task.failed || 0,
-        }
-        this.emailLogs = task.logs || []
-        this.$message.success('邮箱拉取任务已提交，请稍后点击“刷新”查看最新结果')
+        this.startEmailTaskPolling(task.job_id)
+        this.$message.success('邮箱拉取任务已启动，正在实时刷新进度')
       } catch (e) {
-        this.$message.error(`启动邮箱推送失败：${e.message}`)
+        this.$message.error(`启动邮箱拉取失败：${e.message}`)
       } finally {
         this.emailSubmitting = false
       }
     },
 
     formatEmailProgress(percentage) {
-      if (percentage === 100) {
-        return '完成'
-      }
+      if (percentage === 100) return '完成'
       return `${percentage}%`
     },
     getEmailProgress() {
-      if (this.emailTask && this.emailTask.progress_percent !== undefined) {
-        return Math.round(Number(this.emailTask.progress_percent || 0))
-      }
-      if (!this.emailStats.matched_messages) return 0
-      return Math.floor((this.emailStats.downloaded / this.emailStats.matched_messages) * 100)
+      const val = Number(this.emailTask?.progress_percent || 0)
+      if (Number.isNaN(val)) return 0
+      return Math.max(0, Math.min(100, Math.round(val)))
+    },
+    emailLogClass(log) {
+      const text = String(log || '')
+      if (text.includes('错误') || text.includes('失败')) return 'log-item error'
+      return 'log-item'
     },
 
     // 识别任务
@@ -816,6 +956,20 @@ export default {
   margin: 16px 0;
 }
 
+.email-stage-card {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid #e4e7ed;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.stage-line {
+  font-size: 12px;
+  color: #606266;
+  line-height: 1.8;
+}
+
 .email-logs {
   margin-top: 16px;
   border: 1px solid #e4e7ed;
@@ -842,7 +996,22 @@ export default {
       line-height: 1.8;
       padding: 4px 0;
     }
+
+    .log-item.error {
+      color: #f56c6c;
+    }
   }
+}
+
+.email-errors {
+  border-color: #fde2e2;
+  background: #fff8f8;
+}
+
+.email-empty {
+  margin-top: 12px;
+  color: #909399;
+  font-size: 12px;
 }
 
 .ocr-progress-alert {

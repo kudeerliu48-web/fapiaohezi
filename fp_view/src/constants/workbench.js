@@ -50,3 +50,16 @@ export const TASK_TYPE = {
   recognize_batch: '批次识别',
   email_pull: '邮箱拉取',
 }
+
+export const EMAIL_STAGE = {
+  queued: '排队中',
+  connect_imap: '连接邮箱',
+  select_mailbox: '选择邮箱文件夹',
+  search_emails: '搜索邮件',
+  filter_emails: '过滤邮件',
+  parse_message: '解析邮件',
+  download_attachment: '下载附件',
+  import_invoice: '导入发票',
+  trigger_recognition: '触发识别',
+  finalize: '汇总结果',
+}
