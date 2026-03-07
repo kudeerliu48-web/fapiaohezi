@@ -28,7 +28,7 @@ class WorkbenchService:
 
     def _ensure_user(self, user_id: str) -> None:
         if not self.main_db.get_user_by_id(user_id):
-            raise HTTPException(status_code=404, detail="用户不存在")
+            raise HTTPException(status_code=404, detail="?????")
 
     def _get_user_db_path(self, user_id: str) -> str:
         self._ensure_user(user_id)
@@ -211,7 +211,7 @@ class WorkbenchService:
         remark: Optional[str] = None,
     ) -> Dict[str, Any]:
         if not files:
-            raise HTTPException(status_code=400, detail="请至少上传一个文件")
+            raise HTTPException(status_code=400, detail="?????????")
 
         user_db_path = self._get_user_db_path(user_id)
         batch_id = self._create_batch(user_db_path, user_id, remark=remark)
@@ -301,21 +301,21 @@ class WorkbenchService:
         warnings: List[str] = []
 
         if not repaired.get("invoice_number"):
-            warnings.append("发票号码缺失")
+            warnings.append("鍙戠エ鍙风爜缂哄け")
 
         if repaired.get("total_with_tax") is None:
             amount = repaired.get("amount_without_tax")
             tax = repaired.get("tax_amount")
             if amount is not None and tax is not None:
                 repaired["total_with_tax"] = round(amount + tax, 2)
-                warnings.append("价税合计缺失，已由金额+税额推算")
+                warnings.append("浠风◣鍚堣缂哄け锛屽凡鐢遍噾棰?绋庨鎺ㄧ畻")
 
         return repaired, warnings
 
     def _get_invoice(self, user_db_path: str, invoice_id: str) -> Dict[str, Any]:
         invoice = UserDatabaseManager.get_invoice_by_id("", user_db_path, invoice_id)
         if not invoice:
-            raise HTTPException(status_code=404, detail="发票不存在")
+            raise HTTPException(status_code=404, detail="?????")
         return invoice
 
     def _ensure_batch_for_invoice(self, user_db_path: str, user_id: str, invoice: Dict[str, Any]) -> str:
@@ -323,7 +323,7 @@ class WorkbenchService:
         if batch_id:
             return batch_id
 
-        batch_id = self._create_batch(user_db_path, user_id, remark="历史数据自动补批次")
+        batch_id = self._create_batch(user_db_path, user_id, remark="?????????")
         conn = UserDatabaseManager.get_connection(user_db_path)
         cursor = conn.cursor()
         cursor.execute(
@@ -383,7 +383,7 @@ class WorkbenchService:
             saved_filename = invoice.get("saved_filename")
             upload_path = os.path.join(config.get_upload_dir(user_id), saved_filename) if saved_filename else ""
             if not upload_path or not os.path.exists(upload_path):
-                err = "预处理失败：找不到原始文件或预处理文件"
+                err = "???????????????????"
                 self._upsert_step(
                     user_id=user_id,
                     user_db_path=user_db_path,
@@ -444,7 +444,7 @@ class WorkbenchService:
                     ended_at=format_datetime(),
                 )
             except Exception as e:
-                err = f"预处理失败：{str(e)}"
+                err = f"棰勫鐞嗗け璐ワ細{str(e)}"
                 self._upsert_step(
                     user_id=user_id,
                     user_db_path=user_db_path,
@@ -467,13 +467,13 @@ class WorkbenchService:
             external_batch_id = f"{invoice_id}_{int(time.time())}"
             await submit_processed_input(batch_id=external_batch_id, file_path=processed_path)
             await run_batch(batch_id=external_batch_id)
-            final_payload = await wait_final_output(batch_id=external_batch_id, interval_s=1.0, timeout_s=300.0)  # 5 分钟超时
+            final_payload = await wait_final_output(batch_id=external_batch_id, interval_s=1.0, timeout_s=300.0)  # 5 鍒嗛挓瓒呮椂
 
             results = final_payload.get("results") or []
             first = (results[0] if results else {}) or {}
             result_json = first.get("result_json")
             if not isinstance(result_json, dict):
-                raise RuntimeError("OCR返回为空")
+                raise RuntimeError("OCR杩斿洖涓虹┖")
 
             self._upsert_step(
                 user_id=user_id,
@@ -492,7 +492,7 @@ class WorkbenchService:
                 ended_at=format_datetime(),
             )
         except Exception as e:
-            err = f"OCR识别失败：{str(e)}"
+            err = f"OCR?????{str(e)}"
             self._upsert_step(
                 user_id=user_id,
                 user_db_path=user_db_path,
@@ -599,7 +599,7 @@ class WorkbenchService:
         conn.close()
 
         if not invoice_ids:
-            raise HTTPException(status_code=404, detail="批次下没有发票")
+            raise HTTPException(status_code=404, detail="???????")
 
         success = 0
         failed = 0
@@ -678,7 +678,16 @@ class WorkbenchService:
         conn.close()
         if not row:
             raise HTTPException(status_code=404, detail="批次不存在")
-        return dict(row)
+
+        batch = dict(row)
+        try:
+            from services import get_latest_recognition_job
+            task_summary = get_latest_recognition_job(user_id, batch_id=batch_id)
+            if task_summary.get("status") != "not_found":
+                batch["task_summary"] = task_summary
+        except Exception:
+            pass
+        return batch
 
     def get_batch_invoices(
         self,
@@ -773,7 +782,7 @@ class WorkbenchService:
                 i.id, i.batch_id, i.filename, i.saved_filename, i.processed_filename, i.color_filename, i.original_file_path, i.processed_file_path,
                 i.page_index, i.invoice_amount, i.buyer, i.seller, i.invoice_number, i.invoice_date, i.service_name,
                 i.amount_without_tax, i.tax_amount, i.total_with_tax, i.final_json, i.total_duration_ms,
-                i.recognition_status, i.processing_time, i.upload_time, i.file_type, i.file_size,
+                i.recognition_status, i.processing_time, i.upload_time, i.updated_at, i.file_type, i.file_size,
                 b.status AS batch_status, b.created_at AS batch_created_at
             FROM invoice_details i
             LEFT JOIN batches b ON i.batch_id = b.id
@@ -797,12 +806,42 @@ class WorkbenchService:
         total = int(cursor.fetchone()["total"] or 0)
         conn.close()
 
+        task_summary: Optional[Dict[str, Any]] = None
+        try:
+            from services import get_latest_recognition_job
+            task_summary = get_latest_recognition_job(user_id, batch_id=batch_id)
+        except Exception:
+            task_summary = None
+
+        if task_summary and task_summary.get("status") in {"queued", "running"}:
+            current_invoice_id = task_summary.get("current_invoice_id")
+            for row in rows:
+                rec_status = row.get("recognition_status")
+                if rec_status == 1:
+                    row["runtime_status"] = "completed"
+                elif rec_status == 2:
+                    row["runtime_status"] = "failed"
+                elif row.get("id") == current_invoice_id:
+                    row["runtime_status"] = "running"
+                else:
+                    row["runtime_status"] = "queued"
+        else:
+            for row in rows:
+                rec_status = row.get("recognition_status")
+                if rec_status == 1:
+                    row["runtime_status"] = "completed"
+                elif rec_status == 2:
+                    row["runtime_status"] = "failed"
+                else:
+                    row["runtime_status"] = "pending"
+
         return {
             "invoices": rows,
             "total": total,
             "page": page,
             "limit": limit,
             "pages": (total + limit - 1) // limit if limit else 1,
+            "task_summary": task_summary,
         }
 
     def get_invoice_detail(self, user_id: str, invoice_id: str) -> Dict[str, Any]:
@@ -812,6 +851,13 @@ class WorkbenchService:
             invoice["final_json"] = safe_json_loads(invoice["final_json"])
         if invoice.get("json_info"):
             invoice["json_info"] = safe_json_loads(invoice["json_info"])
+        try:
+            from services import get_latest_recognition_job
+            task_summary = get_latest_recognition_job(user_id, batch_id=invoice.get("batch_id"))
+            if task_summary.get("status") != "not_found":
+                invoice["task_summary"] = task_summary
+        except Exception:
+            pass
         return invoice
 
     def get_invoice_steps(self, user_id: str, invoice_id: str) -> List[Dict[str, Any]]:
@@ -837,7 +883,7 @@ class WorkbenchService:
                 s["debug_meta"] = safe_json_loads(s.get("debug_meta") or "{}")
             return steps
         except Exception as e:
-            print(f"❌ 获取发票处理步骤失败：{e}")
+            print(f"???????????{e}")
             import traceback
             traceback.print_exc()
             raise
@@ -964,3 +1010,4 @@ class WorkbenchService:
 
 
 workbench_service = WorkbenchService()
+

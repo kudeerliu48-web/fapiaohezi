@@ -1,7 +1,15 @@
-export const INVOICE_STATUS = {
-  0: { label: '处理中', type: 'info', color: '#909399' },
-  1: { label: '识别成功', type: 'success', color: '#67C23A' },
-  2: { label: '识别失败', type: 'danger', color: '#F56C6C' },
+﻿export const INVOICE_STATUS = {
+  0: { label: '待处理', type: 'info', color: '#909399' },
+  1: { label: '已完成', type: 'success', color: '#67C23A' },
+  2: { label: '失败', type: 'danger', color: '#F56C6C' },
+}
+
+export const INVOICE_RUNTIME_STATUS = {
+  pending: { label: '待处理', type: 'info', color: '#909399' },
+  queued: { label: '排队中', type: 'warning', color: '#E6A23C' },
+  running: { label: '处理中', type: 'warning', color: '#E6A23C' },
+  completed: { label: '已完成', type: 'success', color: '#67C23A' },
+  failed: { label: '失败', type: 'danger', color: '#F56C6C' },
 }
 
 export const BATCH_STATUS = {
@@ -28,3 +36,17 @@ export const STEP_STATUS = {
   skipped: { label: '已跳过', type: 'info' },
 }
 
+export const TASK_STATUS = {
+  queued: { label: '排队中', type: 'info' },
+  running: { label: '处理中', type: 'warning' },
+  completed: { label: '已完成', type: 'success' },
+  failed: { label: '失败', type: 'danger' },
+  partial_success: { label: '部分成功', type: 'warning' },
+  cancelled: { label: '已取消', type: 'info' },
+  not_found: { label: '任务不存在', type: 'info' },
+}
+
+export const TASK_TYPE = {
+  recognize_batch: '批次识别',
+  email_pull: '邮箱拉取',
+}

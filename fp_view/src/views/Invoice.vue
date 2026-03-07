@@ -114,31 +114,27 @@
       </el-tabs>
 
       <div class="quick-actions">
+        <el-button type="primary" :loading="recognizing" @click="startRecognizeUnrecognized()">开始识别</el-button>
         <el-button icon="el-icon-refresh" @click="loadAll">刷新</el-button>
         <el-button type="warning" :disabled="!selectedRows.length" :loading="retryingRows" @click="retrySelected">重试选中</el-button>
         <el-button type="danger" icon="el-icon-delete" :loading="clearing" @click="confirmClearAll">清空历史</el-button>
       </div>
     </el-card>
 
-    <!-- OCR 识别进度提示 -->
-    <el-alert
-      v-if="recognizing"
-      title="正在识别发票..."
-      type="info"
-      :closable="false"
-      show-icon
-      class="ocr-progress-alert"
-    >
-      <template slot="default">
-        <div class="ocr-progress-content">
-          <el-progress :percentage="recognizeProgress" :stroke-width="8" />
-          <div class="ocr-logs" v-if="recognizeLogs.length">
-            <div v-for="(log, idx) in recognizeLogs.slice(-5)" :key="idx" class="ocr-log-item">{{ log }}</div>
-          </div>
-        </div>
-      </template>
-    </el-alert>
+    <task-progress-panel
+      v-if="showRecognizeTaskPanel && recognizeTask && recognizeTask.status !== 'not_found'"
+      :task="recognizeTask"
+      title="当前识别任务"
+      @close="showRecognizeTaskPanel = false"
+    />
+    <task-progress-panel
+      v-if="showEmailTaskPanel && emailTask && emailTask.status !== 'not_found'"
+      :task="emailTask"
+      title="当前邮箱任务"
+      @close="showEmailTaskPanel = false"
+    />
 
+    <el-card class="operation-card" shadow="never">
       <div class="operation-bottom">
         <el-select v-model="filters.recognitionStatus" clearable placeholder="按识别状态筛选" size="small" style="width: 160px">
           <el-option label="处理中" :value="0" />
@@ -209,14 +205,14 @@
         </el-table-column>
         <el-table-column label="状态" width="100" align="center">
           <template slot-scope="scope">
-            <el-tag size="mini" :type="statusMeta(scope.row.recognition_status).type">{{ statusMeta(scope.row.recognition_status).label }}</el-tag>
+            <el-tag size="mini" :type="runtimeStatusMeta(scope.row).type">{{ runtimeStatusMeta(scope.row).label }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="总耗时" width="110" align="right">
           <template slot-scope="scope">{{ duration(scope.row.total_duration_ms) }}</template>
         </el-table-column>
-        <el-table-column label="创建时间" width="168" show-overflow-tooltip>
-          <template slot-scope="scope">{{ datetime(scope.row.upload_time) }}</template>
+        <el-table-column label="更新时间" width="168" show-overflow-tooltip>
+          <template slot-scope="scope">{{ datetime(scope.row.updated_at || scope.row.upload_time) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="210" fixed="right">
           <template slot-scope="scope">
@@ -253,19 +249,22 @@
 </template>
 
 <script>
-import { authAPI } from '@/api/auth'
 import { workbenchAPI } from '@/api/workbench'
-import { invoiceAPI } from '@/api/invoice'
 import InvoiceDetailDialog from '@/components/InvoiceDetailDialog.vue'
-import { INVOICE_STATUS, BATCH_STATUS } from '@/constants/workbench'
+import TaskProgressPanel from '@/components/TaskProgressPanel.vue'
+import {
+  INVOICE_STATUS,
+  INVOICE_RUNTIME_STATUS,
+  BATCH_STATUS,
+} from '@/constants/workbench'
 
 export default {
   name: 'InvoiceWorkbench',
-  components: { InvoiceDetailDialog },
+  components: { InvoiceDetailDialog, TaskProgressPanel },
   data() {
     return {
       userId: '',
-      activeTab: 'upload', // 当前 Tab：'upload' | 'email'
+      activeTab: 'upload',
       overview: {
         total_batches: 0,
         total_invoices: 0,
@@ -286,6 +285,7 @@ export default {
       retryingRows: false,
       detailVisible: false,
       detailLoading: false,
+      detailRefreshLock: false,
       currentInvoice: {},
       currentSteps: [],
       filters: {
@@ -299,7 +299,6 @@ export default {
         limit: 20,
         total: 0,
       },
-      // 邮箱推送相关
       emailForm: {
         mailbox: '',
         authCode: '',
@@ -315,13 +314,17 @@ export default {
       },
       emailLogs: [],
       emailPollTimer: null,
-      // OCR 识别相关
+
       recognizing: false,
       recognizeJobId: null,
-      recognizeProgress: 0,
-      recognizeStatus: 'idle', // idle, running, success, error
       recognizeLogs: [],
       recognizePollTimer: null,
+
+      recognizeTask: null,
+      emailTask: null,
+      showRecognizeTaskPanel: true,
+      showEmailTaskPanel: true,
+      pollingRefreshLock: false,
     }
   },
   computed: {
@@ -352,20 +355,24 @@ export default {
       return
     }
     await this.loadAll()
+    await this.loadLatestTasks()
   },
   beforeDestroy() {
-    // 清理邮箱轮询定时器
-    if (this.emailPollTimer) {
-      clearInterval(this.emailPollTimer)
-    }
-    // 清理 OCR 轮询定时器
-    if (this.recognizePollTimer) {
-      clearInterval(this.recognizePollTimer)
-    }
+    this.stopPolling('email')
+    this.stopPolling('recognize')
   },
   methods: {
     statusMeta(status) {
       return INVOICE_STATUS[status] || { label: '未知', type: 'info' }
+    },
+    runtimeStatusMeta(row) {
+      const runtime = row?.runtime_status || this.mapLegacyStatus(row?.recognition_status)
+      return INVOICE_RUNTIME_STATUS[runtime] || { label: '未知', type: 'info' }
+    },
+    mapLegacyStatus(recognitionStatus) {
+      if (recognitionStatus === 1) return 'completed'
+      if (recognitionStatus === 2) return 'failed'
+      return 'pending'
     },
     batchStatusLabel(status) {
       return (BATCH_STATUS[status] || { label: status || '-' }).label
@@ -383,9 +390,105 @@ export default {
       if (!val) return '-'
       return String(val).replace('T', ' ').slice(0, 19)
     },
+    extractResponseData(res) {
+      if (!res) return {}
+      if (res.data && typeof res.data === 'object') {
+        return res.data.data || res.data
+      }
+      return res
+    },
+    extractJobId(res) {
+      const payload = this.extractResponseData(res)
+      return payload?.job_id || ''
+    },
+    buildInvoiceQueryParams() {
+      const [dateFrom, dateTo] = this.filters.dateRange || []
+      return {
+        page: this.invoicePagination.page,
+        limit: this.invoicePagination.limit,
+        keyword: this.filters.keyword || undefined,
+        batch_id: this.filters.batchId || undefined,
+        recognition_status: this.filters.recognitionStatus,
+        date_from: dateFrom || undefined,
+        date_to: dateTo ? `${dateTo}T23:59:59` : undefined,
+      }
+    },
+    async refreshCurrentDetailSilently() {
+      if (!this.detailVisible || !this.currentInvoice?.id || this.detailRefreshLock) return
+      this.detailRefreshLock = true
+      try {
+        const [invoice, steps] = await Promise.all([
+          workbenchAPI.getInvoiceDetail(this.userId, this.currentInvoice.id),
+          workbenchAPI.getInvoiceSteps(this.userId, this.currentInvoice.id),
+        ])
+        this.currentInvoice = invoice || this.currentInvoice
+        this.currentSteps = steps || this.currentSteps
+      } catch (_) {
+        // 轮询中静默忽略
+      } finally {
+        this.detailRefreshLock = false
+      }
+    },
+    async refreshResultDuringPolling() {
+      if (this.pollingRefreshLock) return
+      this.pollingRefreshLock = true
+      try {
+        const [overview, listData] = await Promise.all([
+          workbenchAPI.getOverview(this.userId),
+          workbenchAPI.getInvoices(this.userId, this.buildInvoiceQueryParams()),
+        ])
+        this.overview = overview || this.overview
+        this.invoiceList = listData.invoices || []
+        this.invoicePagination.total = listData.total || 0
+        if (listData.task_summary && listData.task_summary.status !== 'not_found') {
+          this.recognizeTask = listData.task_summary
+        }
+      } catch (_) {
+        // 轮询刷新失败时不打断任务，也不弹窗
+      } finally {
+        this.pollingRefreshLock = false
+      }
+      await this.refreshCurrentDetailSilently()
+    },
 
     async loadAll() {
       await Promise.all([this.loadOverview(), this.loadBatches(), this.loadInvoiceList(true)])
+    },
+
+    async loadLatestTasks() {
+      try {
+        const [recognizeLatest, emailLatest] = await Promise.all([
+          workbenchAPI.getLatestRecognizeTask(this.userId),
+          workbenchAPI.getLatestEmailPushTask(this.userId),
+        ])
+
+        if (recognizeLatest && recognizeLatest.status && recognizeLatest.status !== 'not_found') {
+          this.recognizeTask = recognizeLatest
+          this.showRecognizeTaskPanel = true
+          if (['queued', 'running'].includes(recognizeLatest.status) && recognizeLatest.job_id) {
+            this.recognizing = true
+            this.startPolling('recognize', recognizeLatest.job_id)
+          }
+        }
+
+        if (emailLatest && emailLatest.status && emailLatest.status !== 'not_found') {
+          this.emailTask = emailLatest
+          this.showEmailTaskPanel = true
+          this.emailStats = {
+            matched_messages: emailLatest.matched_messages || 0,
+            downloaded: emailLatest.downloaded || 0,
+            imported: emailLatest.completed || emailLatest.imported || 0,
+            failed: emailLatest.failed || 0,
+          }
+          this.emailLogs = emailLatest.logs || []
+          if (['queued', 'running'].includes(emailLatest.status) && emailLatest.job_id) {
+            this.emailPulling = true
+            this.startPolling('email', emailLatest.job_id)
+          }
+        }
+      } catch (_) {
+        // 页面初始加载时忽略任务恢复失败
+      }
     },
 
     async loadOverview() {
@@ -409,18 +512,12 @@ export default {
       if (resetPage) this.invoicePagination.page = 1
       this.tableLoading = true
       try {
-        const [dateFrom, dateTo] = this.filters.dateRange || []
-        const data = await workbenchAPI.getInvoices(this.userId, {
-          page: this.invoicePagination.page,
-          limit: this.invoicePagination.limit,
-          keyword: this.filters.keyword || undefined,
-          batch_id: this.filters.batchId || undefined,
-          recognition_status: this.filters.recognitionStatus,
-          date_from: dateFrom || undefined,
-          date_to: dateTo ? `${dateTo}T23:59:59` : undefined,
-        })
+        const data = await workbenchAPI.getInvoices(this.userId, this.buildInvoiceQueryParams())
         this.invoiceList = data.invoices || []
         this.invoicePagination.total = data.total || 0
+        if (data.task_summary && data.task_summary.status !== 'not_found') {
+          this.recognizeTask = data.task_summary
+        }
       } catch (e) {
         this.$message.error(`获取历史清单失败：${e.message}`)
       } finally {
@@ -460,13 +557,13 @@ export default {
       }
       this.uploading = true
       try {
-        await workbenchAPI.uploadBatch(this.userId, this.pendingFiles)
+        const result = await workbenchAPI.uploadBatch(this.userId, this.pendingFiles)
         this.$message.success('上传成功，批次已创建')
         this.pendingFiles = []
         await this.loadAll()
-        
-        // 自动触发 OCR 识别
-        await this.startRecognizeUnrecognized()
+
+        const batchId = result?.batch?.id || ''
+        await this.startRecognizeUnrecognized(batchId)
       } catch (e) {
         this.$message.error(`上传失败：${e.message}`)
       } finally {
@@ -513,7 +610,6 @@ export default {
         await this.$confirm(`确定重试选中的 ${this.selectedRows.length} 条发票吗？`, '批量重试', { type: 'warning' })
         this.retryingRows = true
         for (const row of this.selectedRows) {
-          // 串行执行，避免瞬时并发过高
           await workbenchAPI.retryInvoice(this.userId, row.id)
         }
         this.$message.success('批量重试完成')
@@ -563,193 +659,153 @@ export default {
         this.clearing = false
       }
     },
-    
-    // ==================== 邮箱推送相关方法 ====================
-        
-    // 开始邮箱推送
+
+    // 统一轮询控制
+    startPolling(type, jobId) {
+      if (!jobId) return
+      this.stopPolling(type)
+      if (type === 'email') {
+        this.emailJobId = jobId
+        this.checkEmailStatus().catch(() => {})
+        this.emailPollTimer = setInterval(() => {
+          this.checkEmailStatus().catch(() => {})
+        }, 1000)
+        return
+      }
+      this.recognizeJobId = jobId
+      this.checkRecognizeStatus().catch(() => {})
+      this.recognizePollTimer = setInterval(() => {
+        this.checkRecognizeStatus().catch(() => {})
+      }, 1000)
+    },
+    stopPolling(type) {
+      if (type === 'email' && this.emailPollTimer) {
+        clearInterval(this.emailPollTimer)
+        this.emailPollTimer = null
+      }
+      if (type === 'recognize' && this.recognizePollTimer) {
+        clearInterval(this.recognizePollTimer)
+        this.recognizePollTimer = null
+      }
+    },
+
+    // 邮箱拉取
     async startEmailPush() {
       const { mailbox, authCode, rangeKey } = this.emailForm
       if (!mailbox || !authCode) {
         this.$message.warning('请填写邮箱地址和授权码')
         return
       }
-          
+
       this.emailPulling = true
       this.emailJobId = null
       this.emailStats = { matched_messages: 0, downloaded: 0, imported: 0, failed: 0 }
       this.emailLogs = []
-          
+
       try {
-        const res = await invoiceAPI.startEmailPush(this.userId, {
-          rangeKey,
-          mailbox,
-          authCode,
-        })
-        console.log('邮箱推送响应:', res)
-        console.log('res.data:', res.data)
-        // 后端返回格式：{ success, message, data: { job_id } }
-        this.emailJobId = res.data.data?.job_id || res.data.job_id
-        console.log('获取到的 jobId:', this.emailJobId)
-            
+        const task = await workbenchAPI.startEmailPushTask(this.userId, { rangeKey, mailbox, authCode })
+        this.emailTask = task
+        this.showEmailTaskPanel = true
+        this.emailJobId = task.job_id
+        if (!this.emailJobId) {
+          throw new Error('未获取到邮箱任务ID')
+        }
         this.$message.success('邮箱拉取任务已启动')
-        this.pollEmailStatus()
+        this.startPolling('email', this.emailJobId)
       } catch (e) {
         this.$message.error(`启动邮箱推送失败：${e.message}`)
         this.emailPulling = false
       }
     },
-        
-    // 轮询邮箱推送状态
-    pollEmailStatus() {
-      if (this.emailPollTimer) {
-        clearInterval(this.emailPollTimer)
-      }
-          
-      // 立即执行一次
-      this.checkEmailStatus()
-          
-      // 然后每秒轮询一次
-      this.emailPollTimer = setInterval(() => {
-        this.checkEmailStatus()
-      }, 1000) // 每 1 秒轮询一次
-    },
-        
-    // 检查邮箱推送状态（实际执行方法）
+
     async checkEmailStatus() {
-      try {
-        const res = await invoiceAPI.getEmailPushStatus(this.emailJobId)
-        console.log('轮询状态响应:', res)
-        const status = res.data.data || res.data
-            
-        console.log('状态数据:', status)
-            
-        this.emailStats = {
-          matched_messages: status.matched_messages || 0,
-          downloaded: status.downloaded || 0,
-          imported: status.imported || 0,
-          failed: status.failed || 0,
-        }
-            
-        if (status.logs && status.logs.length) {
-          this.emailLogs = [...this.emailLogs, ...status.logs].slice(-100)
-        }
-            
-        // 如果已完成，停止轮询并刷新列表
-        if (status.status === 'completed') {
-          clearInterval(this.emailPollTimer)
-          this.emailPollTimer = null
-          this.emailPulling = false
-          this.$message.success('邮箱拉取完成')
-          await this.loadAll()
-          
-          // 自动触发 OCR 识别
-          await this.startRecognizeUnrecognized()
-        } else if (status.status === 'error') {
-          // 如果出错，也停止轮询
-          clearInterval(this.emailPollTimer)
-          this.emailPollTimer = null
-          this.emailPulling = false
-          this.$message.error(`邮箱拉取失败：${status.message || '未知错误'}`)
-        }
-      } catch (e) {
-        console.error('轮询邮箱状态失败:', e)
-        // 网络错误时继续轮询，但降低频率
+      if (!this.emailJobId) return
+      const task = await workbenchAPI.getEmailPushTaskStatus(this.userId, this.emailJobId)
+      this.emailTask = task
+      this.emailPulling = ['queued', 'running'].includes(task.status)
+      this.emailStats = {
+        matched_messages: task.matched_messages || 0,
+        downloaded: task.downloaded || 0,
+        imported: task.completed || task.imported || 0,
+        failed: task.failed || 0,
+      }
+      this.emailLogs = task.logs || []
+
+      if (['queued', 'running'].includes(task.status)) {
+        await this.refreshResultDuringPolling()
+        return
+      }
+
+      this.stopPolling('email')
+      if (task.status === 'completed' || task.status === 'partial_success') {
+        this.$message.success('邮箱拉取完成，开始识别新导入发票')
+        await this.loadAll()
+        await this.startRecognizeUnrecognized()
+      } else if (task.status === 'failed') {
+        this.$message.error('邮箱拉取失败')
       }
     },
-        
-    // 格式化进度显示
+
     formatEmailProgress(percentage) {
       if (percentage === 100) {
         return '完成'
       }
       return `${percentage}%`
     },
-        
-    // 计算邮箱进度百分比
     getEmailProgress() {
+      if (this.emailTask && this.emailTask.progress_percent !== undefined) {
+        return Math.round(Number(this.emailTask.progress_percent || 0))
+      }
       if (!this.emailStats.matched_messages) return 0
       return Math.floor((this.emailStats.downloaded / this.emailStats.matched_messages) * 100)
     },
-    
-    // ==================== OCR 识别相关方法 ====================
-    
-    // 开始识别所有未识别发票
-    async startRecognizeUnrecognized() {
+
+    // 识别任务
+    async startRecognizeUnrecognized(batchId = '') {
       try {
-        const res = await workbenchAPI.recognizeUnrecognized(this.userId)
-        console.log('OCR 识别响应:', res)
-        
-        this.recognizeJobId = res.data.data?.job_id || res.data.job_id
-        this.recognizing = true
-        this.recognizeStatus = 'running'
-        this.recognizeProgress = 0
-        this.recognizeLogs = []
-        
-        this.$message.success('已启动 OCR 识别任务')
-        this.pollRecognizeStatus()
+        const task = await workbenchAPI.recognizeUnrecognized(this.userId, batchId)
+        this.recognizeTask = task
+        this.showRecognizeTaskPanel = true
+        this.recognizeJobId = task.job_id
+        if (!this.recognizeJobId) {
+          throw new Error('未获取到识别任务ID')
+        }
+
+        this.recognizing = ['queued', 'running'].includes(task.status)
+        this.recognizeLogs = task.logs || []
+        this.$message.success('识别任务已启动')
+        if (this.recognizing) {
+          this.startPolling('recognize', this.recognizeJobId)
+        }
       } catch (e) {
-        console.error('启动 OCR 识别失败:', e)
-        // 如果没有未识别的发票，直接提示
-        if (e.message && e.message.includes('没有待识别')) {
+        if (e.message && (e.message.includes('没有待识别') || e.message.includes('未识别'))) {
           this.$message.info('没有待识别的发票')
         } else {
           this.$message.error(`启动识别失败：${e.message}`)
         }
       }
     },
-    
-    // 轮询识别状态
-    pollRecognizeStatus() {
-      if (this.recognizePollTimer) {
-        clearInterval(this.recognizePollTimer)
-      }
-      
-      // 立即执行一次
-      this.checkRecognizeStatus()
-      
-      // 每秒轮询一次
-      this.recognizePollTimer = setInterval(() => {
-        this.checkRecognizeStatus()
-      }, 1000)
-    },
-    
-    // 检查识别状态（实际执行方法）
+
     async checkRecognizeStatus() {
-      try {
-        const res = await workbenchAPI.getRecognizeStatus(this.userId, this.recognizeJobId)
-        console.log('识别状态响应:', res)
-        const status = res.data.data || res.data
-        
-        console.log('识别状态数据:', status)
-        
-        // 更新进度
-        if (status.total > 0) {
-          this.recognizeProgress = Math.floor((status.completed / status.total) * 100)
-        }
-        
-        // 更新日志
-        if (status.logs && status.logs.length) {
-          this.recognizeLogs = [...this.recognizeLogs, ...status.logs].slice(-50)
-        }
-        
-        // 检查是否完成
-        if (status.status === 'completed') {
-          clearInterval(this.recognizePollTimer)
-          this.recognizePollTimer = null
-          this.recognizing = false
-          this.recognizeStatus = 'success'
-          this.$message.success('OCR 识别完成')
-          await this.loadAll() // 刷新列表
-        } else if (status.status === 'error') {
-          clearInterval(this.recognizePollTimer)
-          this.recognizePollTimer = null
-          this.recognizing = false
-          this.recognizeStatus = 'error'
-          this.$message.error(`识别失败：${status.message || '未知错误'}`)
-        }
-      } catch (e) {
-        console.error('轮询识别状态失败:', e)
-        // 网络错误时继续轮询
+      if (!this.recognizeJobId) return
+      const task = await workbenchAPI.getRecognizeStatus(this.userId, this.recognizeJobId)
+      this.recognizeTask = task
+      this.recognizing = ['queued', 'running'].includes(task.status)
+      this.recognizeLogs = task.logs || []
+
+      await this.refreshResultDuringPolling()
+
+      if (this.recognizing) return
+
+      this.stopPolling('recognize')
+      if (task.status === 'completed') {
+        this.$message.success('识别任务完成')
+        await this.loadAll()
+      } else if (task.status === 'partial_success') {
+        this.$message.warning('识别任务完成，存在失败项')
+        await this.loadAll()
+      } else if (task.status === 'failed') {
+        this.$message.error('识别任务失败')
       }
     },
   },
@@ -1032,3 +1088,4 @@ export default {
   }
 }
 </style>
+

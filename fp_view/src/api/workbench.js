@@ -1,4 +1,4 @@
-import api from './auth'
+﻿import api from './auth'
 
 function unwrap(res) {
   const payload = res?.data
@@ -48,7 +48,7 @@ export const workbenchAPI = {
 
   async retryInvoice(userId, invoiceId) {
     return unwrap(await api.post(`/workbench/invoice/${userId}/${invoiceId}/retry`, {}, {
-      timeout: 300000 // 5 分钟超时
+      timeout: 300000,
     }))
   },
 
@@ -69,15 +69,50 @@ export const workbenchAPI = {
   },
 
   // OCR 识别所有未识别发票
-  async recognizeUnrecognized(userId) {
-    return unwrap(await api.post(`/workbench/recognize-unrecognized`, { user_id: userId }))
+  async recognizeUnrecognized(userId, batchId = '') {
+    return unwrap(await api.post(`/workbench/recognize-unrecognized`, {
+      user_id: userId,
+      batch_id: batchId || undefined,
+    }))
   },
 
   // 查询识别任务状态
   async getRecognizeStatus(userId, jobId) {
     return unwrap(await api.get(`/workbench/recognize-status/${jobId}`, { params: { user_id: userId } }))
   },
+
+  // 查询最近识别任务
+  async getLatestRecognizeTask(userId, batchId = '') {
+    return unwrap(await api.get(`/workbench/recognize-latest/${userId}`, {
+      params: { batch_id: batchId || undefined },
+    }))
+  },
+
+  // 启动邮箱拉取任务
+  async startEmailPushTask(userId, payload) {
+    const formData = new FormData()
+    formData.append('range_key', payload.rangeKey)
+    if (payload.mailbox) formData.append('mailbox', payload.mailbox)
+    formData.append('auth_code', payload.authCode)
+
+    return unwrap(await api.post(`/workbench/email-push/${userId}/start`, formData, {
+      timeout: 60000,
+      headers: { 'Content-Type': 'multipart/form-data' },
+    }))
+  },
+
+  // 查询邮箱拉取任务状态
+  async getEmailPushTaskStatus(userId, jobId) {
+    return unwrap(await api.get(`/workbench/email-push/status/${jobId}`, {
+      params: { user_id: userId },
+      timeout: 30000,
+    }))
+  },
+
+  // 查询最近邮箱拉取任务
+  async getLatestEmailPushTask(userId) {
+    return unwrap(await api.get(`/workbench/email-push/latest/${userId}`))
+  },
 }
 
 export default workbenchAPI
-
