@@ -128,7 +128,9 @@ export default {
     },
     currentImage() {
       // 优先使用彩色版本进行预览（更清晰）
-      const colorPath = this.invoice.color_filename ? `/files/${this.userId}/processed/${this.invoice.color_filename}` : null
+      const user = JSON.parse(localStorage.getItem('user') || '{}')
+      const uid = user.id || ''
+      const colorPath = (uid && this.invoice.color_filename) ? `http://localhost:8000/files/${uid}/processed/${encodeURIComponent(this.invoice.color_filename)}` : null
       const processed = this.toAbsoluteUrl(this.invoice.processed_file_path || this.invoice.processed_filename, 'processed')
       const original = this.toAbsoluteUrl(this.invoice.original_file_path || this.invoice.saved_filename, 'uploads')
       
@@ -219,16 +221,18 @@ export default {
 <style scoped lang="scss">
 .detail-layout {
   display: flex;
-  gap: 16px;
+  gap: 18px;
   min-height: 72vh;
+  animation: detail-fade 0.28s ease-out;
 }
 
 .preview-pane,
 .pipeline-pane {
-  background: #fff;
-  border: 1px solid #ebeef5;
-  border-radius: 10px;
-  padding: 12px;
+  background: linear-gradient(155deg, #ffffff, #f8fbff);
+  border: 1px solid #dce8f8;
+  border-radius: 14px;
+  padding: 14px;
+  box-shadow: 0 10px 24px rgba(24, 56, 98, 0.08);
 }
 
 .preview-pane {
@@ -247,6 +251,8 @@ export default {
   justify-content: space-between;
   align-items: center;
   margin-bottom: 10px;
+  font-weight: 600;
+  color: #223147;
 }
 
 .preview-meta {
@@ -260,9 +266,9 @@ export default {
 
 .image-container {
   flex: 1;
-  border: 1px solid #f0f2f5;
-  border-radius: 8px;
-  background: #f8fafc;
+  border: 1px solid #e0ebf8;
+  border-radius: 12px;
+  background: radial-gradient(circle at 0% 0%, #eef6ff, #f9fcff);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -282,10 +288,10 @@ export default {
 
 .summary-card {
   margin-bottom: 14px;
-  padding: 10px;
-  border-radius: 8px;
-  background: #f8fbff;
-  border: 1px solid #e6eef8;
+  padding: 12px;
+  border-radius: 12px;
+  background: linear-gradient(135deg, #f7fbff, #eff6ff);
+  border: 1px solid #dce8f8;
 }
 
 .summary-title {
@@ -319,7 +325,8 @@ export default {
 .steps-title {
   font-size: 14px;
   font-weight: 600;
-  margin-bottom: 8px;
+  margin-bottom: 10px;
+  color: #25364e;
 }
 
 .step-title-row {
@@ -350,10 +357,40 @@ export default {
   gap: 8px;
 }
 
+:deep(.el-dialog__header) {
+  border-bottom: 1px solid #e7effb;
+  padding-bottom: 14px;
+}
+
+:deep(.el-dialog__title) {
+  color: #1f2d41;
+  font-weight: 700;
+  letter-spacing: 0.2px;
+}
+
+:deep(.el-collapse-item__header) {
+  border-radius: 10px;
+  transition: background-color 0.2s ease;
+}
+
+:deep(.el-collapse-item__header:hover) {
+  background: #f5f9ff;
+}
+
+@keyframes detail-fade {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (max-width: 1200px) {
   .detail-layout {
     flex-direction: column;
   }
 }
 </style>
-

@@ -82,6 +82,19 @@ def _imap_host_for_email(addr: str) -> str:
     return f"imap.{domain}" if domain else "imap.qq.com"
 
 
+def _parse_date_ymd(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%d")
+    except Exception:
+        return None
+
+
+def _imap_date(value: datetime) -> str:
+    return value.strftime("%d-%b-%Y")
+
+
 def _extract_links_from_html(html: str) -> List[str]:
     if not html:
         return []
@@ -212,9 +225,13 @@ def _normalize_email_job_payload(job_id: Optional[str], job: Optional[Dict[str, 
             "status": "not_found",
             "raw_status": "not_found",
             "user_id": None,
-            "mailbox": "",
+            "mailbox": "INBOX",
+            "mailbox_account": "",
             "mailbox_folder": "INBOX",
             "time_range": "",
+            "date_range_mode": "",
+            "start_date": "",
+            "end_date": "",
             "days": 0,
             "current_stage": "queued",
             "scanned_emails": 0,
@@ -270,9 +287,13 @@ def _normalize_email_job_payload(job_id: Optional[str], job: Optional[Dict[str, 
         "status": status,
         "raw_status": raw_status,
         "user_id": job.get("user_id"),
-        "mailbox": job.get("mailbox") or "",
+        "mailbox": job.get("mailbox") or "INBOX",
+        "mailbox_account": job.get("mailbox_account") or "",
         "mailbox_folder": job.get("mailbox_folder") or "INBOX",
         "time_range": job.get("time_range") or "",
+        "date_range_mode": job.get("date_range_mode") or "",
+        "start_date": job.get("start_date") or "",
+        "end_date": job.get("end_date") or "",
         "days": int(job.get("days") or 0),
         "current_stage": job.get("current_stage") or "queued",
         "scanned_emails": scanned,
@@ -365,7 +386,15 @@ def _set_stage(job_id: str, stage: str, message: Optional[str] = None) -> None:
         _log(job_id, message)
 
 
-def start_email_push_job(user_id: str, mailbox: str, auth_code: str, days: int) -> str:
+def start_email_push_job(
+    user_id: str,
+    mailbox: str,
+    auth_code: str,
+    days: int,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    date_range_mode: Optional[str] = None,
+) -> str:
     job_id = uuid.uuid4().hex
     with _email_jobs_lock:
         _email_jobs[job_id] = {
@@ -373,9 +402,13 @@ def start_email_push_job(user_id: str, mailbox: str, auth_code: str, days: int) 
             "task_type": "email_pull",
             "status": "queued",
             "user_id": user_id,
-            "mailbox": mailbox,
+            "mailbox": "INBOX",
+            "mailbox_account": mailbox,
             "mailbox_folder": "INBOX",
             "time_range": f"last_{days}_days",
+            "date_range_mode": date_range_mode or f"last_{days}_days",
+            "start_date": start_date or "",
+            "end_date": end_date or "",
             "days": days,
             "current_stage": "queued",
             "scanned_emails": 0,
@@ -399,7 +432,7 @@ def start_email_push_job(user_id: str, mailbox: str, auth_code: str, days: int) 
 
     t = threading.Thread(
         target=_run_email_push_job_sync,
-        args=(job_id, user_id, mailbox, auth_code, days),
+        args=(job_id, user_id, mailbox, auth_code, days, start_date, end_date),
         daemon=True,
     )
     t.start()
@@ -421,7 +454,15 @@ def get_latest_email_push_job(user_id: str) -> Dict[str, Any]:
         return _normalize_email_job_payload(job_id, job)
 
 
-def _run_email_push_job_sync(job_id: str, user_id: str, mailbox: str, auth_code: str, days: int) -> None:
+def _run_email_push_job_sync(
+    job_id: str,
+    user_id: str,
+    mailbox: str,
+    auth_code: str,
+    days: int,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> None:
     from services import file_service
 
     _set(job_id, status="running")
@@ -430,13 +471,29 @@ def _run_email_push_job_sync(job_id: str, user_id: str, mailbox: str, auth_code:
     db = DatabaseManager()
     user = db.get_user_by_id(user_id)
     if not user:
+        _inc(job_id, failed_count=1)
         _error(job_id, "用户不存在")
         _set(job_id, status="failed", finished_at=_email_now())
         return
 
     host = _imap_host_for_email(mailbox)
-    start_date = (datetime.now() - timedelta(days=days)).date()
-    today = datetime.now().date()
+    start_dt = _parse_date_ymd(start_date)
+    end_dt = _parse_date_ymd(end_date)
+    if not end_dt:
+        end_dt = datetime.now()
+    if not start_dt:
+        start_dt = end_dt - timedelta(days=days)
+    if start_dt > end_dt:
+        start_dt, end_dt = end_dt, start_dt
+    start_day = start_dt.date()
+    end_day = end_dt.date()
+    end_plus_one = end_dt + timedelta(days=1)
+
+    _set(
+        job_id,
+        start_date=start_day.isoformat(),
+        end_date=end_day.isoformat(),
+    )
     save_dir = os.path.join(config.get_upload_dir(user_id), "_email_tmp", job_id)
     os.makedirs(save_dir, exist_ok=True)
 
@@ -454,14 +511,18 @@ def _run_email_push_job_sync(job_id: str, user_id: str, mailbox: str, auth_code:
         if status != "OK":
             raise RuntimeError("选择 INBOX 失败")
         _log(job_id, "已选择 INBOX")
+        _log(job_id, f"生效日期范围：{start_day.isoformat()} 至 {end_day.isoformat()}")
 
         _set_stage(job_id, "search_emails", "正在搜索邮件...")
-        status, data = imap.search(None, "ALL")
+        search_since = _imap_date(start_dt)
+        search_before = _imap_date(end_plus_one)
+        _log(job_id, f"IMAP SEARCH 条件：SINCE {search_since} BEFORE {search_before}")
+        status, data = imap.search(None, "SINCE", search_since, "BEFORE", search_before)
         if status != "OK":
             raise RuntimeError("IMAP 搜索失败")
         all_ids = data[0].split() if data and data[0] else []
         _set(job_id, scanned_emails=0)
-        _log(job_id, f"搜索到候选邮件 {len(all_ids)} 封")
+        _log(job_id, f"服务端返回候选邮件 {len(all_ids)} 封")
 
         _set_stage(job_id, "filter_emails", "正在过滤符合条件的邮件...")
         for idx, mid in enumerate(all_ids, start=1):
@@ -485,7 +546,7 @@ def _run_email_push_job_sync(job_id: str, user_id: str, mailbox: str, auth_code:
                 except Exception:
                     continue
 
-                if not (start_date <= msg_date <= today):
+                if not (start_day <= msg_date <= end_day):
                     continue
                 matched_ids.append(mid)
             except Exception:
@@ -495,7 +556,8 @@ def _run_email_push_job_sync(job_id: str, user_id: str, mailbox: str, auth_code:
                     _log(job_id, f"已扫描邮件 {idx}/{len(all_ids)}")
 
         _set(job_id, matched_emails=len(matched_ids))
-        _log(job_id, f"匹配到符合条件邮件 {len(matched_ids)} 封")
+        _log(job_id, f"本地二次过滤后邮件 {len(matched_ids)} 封")
+        _log(job_id, f"最终进入附件处理邮件 {len(matched_ids)} 封")
 
         if not matched_ids:
             _log(job_id, "未匹配到符合条件的邮件")
@@ -630,6 +692,7 @@ def _run_email_push_job_sync(job_id: str, user_id: str, mailbox: str, auth_code:
         )
         _log(job_id, "邮箱拉取任务已结束")
     except Exception as e:
+        _inc(job_id, failed_count=1)
         _error(job_id, f"任务异常终止：{str(e)}")
         with _email_jobs_lock:
             current = _email_jobs.get(job_id) or {}

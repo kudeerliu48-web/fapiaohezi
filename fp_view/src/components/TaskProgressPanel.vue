@@ -31,6 +31,12 @@
     <div v-if="isEmailTask && stageLabel" class="panel-line">
       当前阶段：{{ stageLabel }}
     </div>
+    <div v-if="isEmailTask && (task.start_date || task.end_date)" class="panel-line">
+      生效范围：{{ task.start_date || '-' }} 至 {{ task.end_date || '-' }}
+    </div>
+    <div v-if="isEmailTask && (task.mailbox || task.mailbox_folder)" class="panel-line">
+      邮箱文件夹：{{ task.mailbox || task.mailbox_folder }}
+    </div>
     <div v-if="isEmailTask && task.current_email_subject" class="panel-line">
       当前邮件：{{ task.current_email_subject }}
     </div>
@@ -144,8 +150,12 @@ export default {
 
 <style scoped lang="scss">
 .task-progress-panel {
-  border-radius: 10px;
+  border-radius: 14px;
   margin-bottom: 12px;
+  border: 1px solid rgba(164, 190, 224, 0.28);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(244, 249, 255, 0.92));
+  box-shadow: 0 10px 26px rgba(25, 60, 112, 0.1);
+  animation: panel-rise 0.3s ease-out;
 }
 
 .panel-head {
@@ -213,5 +223,16 @@ export default {
 
 .log-item.error {
   color: #f56c6c;
+}
+
+@keyframes panel-rise {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 </style>

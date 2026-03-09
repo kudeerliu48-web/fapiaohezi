@@ -8,7 +8,10 @@
     <el-row :gutter="12" class="overview-row">
       <el-col :span="3" v-for="card in overviewCards" :key="card.key">
         <el-card shadow="hover" class="overview-card">
-          <div class="card-label">{{ card.label }}</div>
+          <div class="card-head">
+            <div class="card-label">{{ card.label }}</div>
+            <i :class="['card-icon', card.icon]" />
+          </div>
           <div class="card-value">{{ card.value }}</div>
         </el-card>
       </el-col>
@@ -56,6 +59,17 @@
                     <el-option label="最近 6 个月" value="6m" />
                     <el-option label="最近 12 个月" value="12m" />
                   </el-select>
+                </el-form-item>
+                <el-form-item label="自定义日期">
+                  <el-date-picker
+                    v-model="emailForm.customDateRange"
+                    type="daterange"
+                    unlink-panels
+                    range-separator="至"
+                    start-placeholder="开始日期"
+                    end-placeholder="结束日期"
+                    value-format="yyyy-MM-dd"
+                  />
                 </el-form-item>
                 <el-form-item>
                   <el-button type="primary" :loading="emailSubmitting" @click="startEmailPush">开始拉取</el-button>
@@ -108,6 +122,10 @@
             <div v-if="emailTask && emailTask.status !== 'not_found'" class="email-stage-card">
               <div class="stage-line">当前状态：{{ emailTaskStatusLabel(emailTask.status) }}</div>
               <div class="stage-line">当前阶段：{{ emailStageLabel }}</div>
+              <div class="stage-line">目标邮箱：{{ emailTask.mailbox_account || emailForm.mailbox || '-' }}</div>
+              <div class="stage-line">邮箱文件夹：{{ emailTask.mailbox || emailTask.mailbox_folder || 'INBOX' }}</div>
+              <div class="stage-line">日期模式：{{ emailTask.date_range_mode || '-' }}</div>
+              <div class="stage-line">生效范围：{{ emailTask.start_date || '-' }} 至 {{ emailTask.end_date || '-' }}</div>
               <div class="stage-line" v-if="emailTask.current_email_subject">当前邮件：{{ emailTask.current_email_subject }}</div>
               <div class="stage-line" v-if="emailTask.current_attachment_name">当前附件：{{ emailTask.current_attachment_name }}</div>
             </div>
@@ -335,6 +353,7 @@ export default {
         mailbox: '',
         authCode: '',
         rangeKey: '3m',
+        customDateRange: [],
       },
       emailStats: {
         scanned_emails: 0,
@@ -359,13 +378,13 @@ export default {
   computed: {
     overviewCards() {
       return [
-        { key: 'batches', label: '总批次数', value: this.overview.total_batches },
-        { key: 'invoices', label: '总发票数', value: this.overview.total_invoices },
-        { key: 'processing', label: '处理中', value: this.overview.processing_count },
-        { key: 'success', label: '成功数量', value: this.overview.success_count },
-        { key: 'failed', label: '失败数量', value: this.overview.failed_count },
-        { key: 'today', label: '今日新增', value: this.overview.today_new },
-        { key: 'avg', label: '平均耗时', value: this.duration(this.overview.avg_duration_ms) },
+        { key: 'batches', label: '总批次数', value: this.overview.total_batches, icon: 'el-icon-collection-tag' },
+        { key: 'invoices', label: '总发票数', value: this.overview.total_invoices, icon: 'el-icon-tickets' },
+        { key: 'processing', label: '处理中', value: this.overview.processing_count, icon: 'el-icon-loading' },
+        { key: 'success', label: '成功数量', value: this.overview.success_count, icon: 'el-icon-circle-check' },
+        { key: 'failed', label: '失败数量', value: this.overview.failed_count, icon: 'el-icon-warning-outline' },
+        { key: 'today', label: '今日新增', value: this.overview.today_new, icon: 'el-icon-date' },
+        { key: 'avg', label: '平均耗时', value: this.duration(this.overview.avg_duration_ms), icon: 'el-icon-timer' },
       ]
     },
     emptyText() {
@@ -729,7 +748,11 @@ export default {
           await Promise.all([this.loadBatches(), this.loadInvoiceList(false, true)])
           this.stopEmailTaskPolling()
           if (task.status === 'completed') {
-            this.$message.success('邮箱拉取完成，清单已自动刷新')
+            if (Number(task.matched_emails || 0) === 0) {
+              this.$message.info('未找到符合条件的邮件，已结束本次拉取')
+            } else {
+              this.$message.success('邮箱拉取完成，清单已自动刷新')
+            }
           } else if (task.status === 'partial_success') {
             this.$message.warning('邮箱拉取部分成功，请查看日志与错误信息')
           } else if (task.status === 'failed') {
@@ -744,11 +767,12 @@ export default {
     },
     // 邮箱拉取
     async startEmailPush() {
-      const { mailbox, authCode, rangeKey } = this.emailForm
+      const { mailbox, authCode, rangeKey, customDateRange } = this.emailForm
       if (!authCode) {
         this.$message.warning('请填写授权码')
         return
       }
+      const [startDate, endDate] = customDateRange || []
 
       this.emailSubmitting = true
       this.emailLogs = []
@@ -761,11 +785,17 @@ export default {
       })
 
       try {
-        const task = await workbenchAPI.startEmailPushTask(this.userId, { rangeKey, mailbox, authCode })
+        const task = await workbenchAPI.startEmailPushTask(this.userId, {
+          rangeKey,
+          mailbox,
+          authCode,
+          startDate,
+          endDate,
+        })
         this.applyEmailTask(task)
         this.showEmailTaskPanel = true
         this.startEmailTaskPolling(task.job_id)
-        this.$message.success('邮箱拉取任务已启动，正在实时刷新进度')
+        this.$message.success('邮箱任务进行中，正在搜索指定日期范围内的邮件')
       } catch (e) {
         this.$message.error(`启动邮箱拉取失败：${e.message}`)
       } finally {
@@ -809,47 +839,112 @@ export default {
 
 <style scoped lang="scss">
 .workbench-page {
-  padding: 16px;
-  background: #f5f7fa;
+  --wb-primary: #1f6fff;
+  --wb-primary-soft: #eaf2ff;
+  --wb-text-main: #1e2a3a;
+  --wb-text-sub: #6f7f96;
+  --wb-border: #e5ecf5;
+  --wb-bg: #f3f7fc;
+  --wb-card: rgba(255, 255, 255, 0.88);
+
+  position: relative;
+  padding: 18px;
+  background: radial-gradient(1200px 500px at 0% -20%, #ddecff 0%, transparent 48%),
+    radial-gradient(1200px 500px at 100% -20%, #e7fbff 0%, transparent 46%),
+    var(--wb-bg);
   min-height: calc(100vh - 84px);
+  animation: wb-fade-in 0.45s ease-out;
+}
+
+.workbench-page::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0));
+  pointer-events: none;
 }
 
 .workbench-header {
-  margin-bottom: 12px;
+  margin-bottom: 14px;
+  position: relative;
+  z-index: 1;
   .title {
-    font-size: 24px;
-    color: #303133;
+    font-size: 28px;
+    color: var(--wb-text-main);
+    letter-spacing: 0.5px;
     margin: 0;
   }
   .desc {
     margin-top: 6px;
-    color: #909399;
+    color: var(--wb-text-sub);
     font-size: 13px;
   }
 }
 
 .overview-row {
-  margin-bottom: 12px;
+  margin-bottom: 14px;
+  position: relative;
+  z-index: 1;
 }
 
 .overview-card {
-  border-radius: 10px;
-  .card-label {
-    color: #909399;
-    font-size: 12px;
+  border-radius: 14px;
+  border: 1px solid rgba(160, 190, 230, 0.24);
+  backdrop-filter: blur(8px);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(246, 250, 255, 0.9));
+  box-shadow: 0 8px 24px rgba(26, 63, 116, 0.08);
+  transition: transform 0.2s ease, box-shadow 0.24s ease, border-color 0.24s ease;
+  animation: wb-rise 0.42s ease both;
+
+  &:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 14px 28px rgba(26, 63, 116, 0.14);
+    border-color: rgba(76, 144, 255, 0.3);
   }
+
+  .card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .card-label {
+    color: var(--wb-text-sub);
+    font-size: 12px;
+    letter-spacing: 0.2px;
+  }
+
+  .card-icon {
+    width: 26px;
+    height: 26px;
+    border-radius: 8px;
+    background: var(--wb-primary-soft);
+    color: var(--wb-primary);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+  }
+
   .card-value {
     margin-top: 8px;
-    font-size: 20px;
-    font-weight: 600;
-    color: #303133;
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--wb-text-main);
+    letter-spacing: 0.2px;
   }
 }
 
 .operation-card,
 .table-card {
-  border-radius: 10px;
-  margin-bottom: 12px;
+  border-radius: 14px;
+  margin-bottom: 14px;
+  border: 1px solid rgba(160, 190, 230, 0.22);
+  box-shadow: 0 8px 24px rgba(22, 42, 77, 0.08);
+  background: var(--wb-card);
+  backdrop-filter: blur(8px);
+  position: relative;
+  z-index: 1;
 }
 
 .operation-top {
@@ -861,13 +956,16 @@ export default {
 
 .upload-area {
   flex: 1;
-  border: 1px dashed #c0c4cc;
-  border-radius: 8px;
-  padding: 12px;
-  background: #fafcff;
+  border: 1px dashed #c3d5ee;
+  border-radius: 12px;
+  padding: 14px;
+  background: linear-gradient(135deg, #f8fbff 0%, #f2f8ff 100%);
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+
   &.dragover {
-    border-color: #409eff;
-    background: #ecf5ff;
+    border-color: var(--wb-primary);
+    background: #eaf3ff;
+    transform: translateY(-1px);
   }
 }
 
@@ -888,21 +986,48 @@ export default {
 }
 
 .upload-actions {
-  margin-top: 10px;
+  margin-top: 12px;
   display: flex;
-  gap: 8px;
+  gap: 10px;
 }
 
 .quick-actions {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   align-items: flex-start;
   flex-wrap: wrap;
+
+  :deep(.el-button) {
+    border-radius: 10px;
+    transition: all 0.18s ease;
+  }
+
+  :deep(.el-button--primary) {
+    border-color: #1e69f3;
+    background: linear-gradient(135deg, #1f6fff, #1459d6);
+    box-shadow: 0 8px 18px rgba(31, 111, 255, 0.24);
+  }
+
+  :deep(.el-button--primary:hover) {
+    transform: translateY(-1px);
+    box-shadow: 0 12px 24px rgba(31, 111, 255, 0.3);
+  }
+
+  :deep(.el-button--warning) {
+    background: linear-gradient(135deg, #f8b13d, #e28b1f);
+    border-color: #e39a29;
+    color: #fff;
+  }
+
+  :deep(.el-button--danger) {
+    background: linear-gradient(135deg, #f66f7f, #ed4e60);
+    border-color: #ec5c6f;
+  }
 }
 
 .hint-text {
   font-size: 12px;
-  color: #909399;
+  color: var(--wb-text-sub);
   line-height: 32px;
 }
 
@@ -913,38 +1038,45 @@ export default {
 }
 
 .email-panel {
-  padding: 12px;
+  padding: 14px;
 }
 
 .email-form {
-  margin-bottom: 16px;
+  margin-bottom: 14px;
 }
 
 .email-stats {
-  margin-top: 16px;
-  margin-bottom: 16px;
-  
+  margin-top: 14px;
+  margin-bottom: 14px;
+
   .stat-card {
-    background: #f5f7fa;
-    border-radius: 8px;
-    padding: 16px;
+    background: linear-gradient(160deg, #f6faff 0%, #eef6ff 100%);
+    border: 1px solid #dce9f9;
+    border-radius: 12px;
+    padding: 14px 10px;
     text-align: center;
-    
+    transition: transform 0.18s ease, box-shadow 0.22s ease;
+
+    &:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 20px rgba(33, 77, 143, 0.12);
+    }
+
     .stat-label {
-      font-size: 13px;
-      color: #909399;
+      font-size: 12px;
+      color: var(--wb-text-sub);
       margin-bottom: 8px;
     }
-    
+
     .stat-value {
-      font-size: 24px;
+      font-size: 22px;
       font-weight: 600;
-      color: #303133;
-      
+      color: var(--wb-text-main);
+
       &.success {
         color: #67c23a;
       }
-      
+
       &.error {
         color: #f56c6c;
       }
@@ -953,52 +1085,68 @@ export default {
 }
 
 .email-progress {
-  margin: 16px 0;
+  margin: 14px 0;
+
+  :deep(.el-progress-bar__outer) {
+    background-color: #eaf0fa;
+    height: 10px !important;
+    border-radius: 999px;
+  }
+
+  :deep(.el-progress-bar__inner) {
+    background: linear-gradient(90deg, #1f6fff, #3da4ff);
+    border-radius: 999px;
+    transition: width 0.35s ease;
+  }
 }
 
 .email-stage-card {
   margin: 12px 0;
-  padding: 12px;
-  border: 1px solid #e4e7ed;
-  border-radius: 8px;
-  background: #fafafa;
+  padding: 12px 14px;
+  border: 1px solid #d8e7f8;
+  border-radius: 12px;
+  background: linear-gradient(160deg, #f8fbff 0%, #f2f8ff 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
+  animation: wb-fade-in 0.25s ease-out;
 }
 
 .stage-line {
   font-size: 12px;
-  color: #606266;
+  color: #3f4d60;
   line-height: 1.8;
 }
 
 .email-logs {
-  margin-top: 16px;
-  border: 1px solid #e4e7ed;
-  border-radius: 6px;
-  background: #fafafa;
+  margin-top: 12px;
+  border: 1px solid #dce8f8;
+  border-radius: 10px;
+  background: #f8fbff;
   max-height: 300px;
   overflow-y: auto;
-  
+
   .logs-title {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 600;
-    color: #606266;
-    padding: 10px 12px;
-    border-bottom: 1px solid #e4e7ed;
-    background: #f5f7fa;
+    color: #4f6179;
+    padding: 9px 12px;
+    border-bottom: 1px solid #e6eef9;
+    background: #f1f7ff;
   }
-  
+
   .logs-content {
     padding: 8px 12px;
-    
+
     .log-item {
       font-size: 12px;
-      color: #606266;
-      line-height: 1.8;
+      color: #45556e;
+      line-height: 1.7;
       padding: 4px 0;
+      animation: wb-fade-in 0.2s ease-out;
     }
 
     .log-item.error {
       color: #f56c6c;
+      font-weight: 500;
     }
   }
 }
@@ -1010,8 +1158,12 @@ export default {
 
 .email-empty {
   margin-top: 12px;
-  color: #909399;
+  color: var(--wb-text-sub);
   font-size: 12px;
+  background: #f7fbff;
+  border: 1px dashed #d4e2f4;
+  padding: 10px 12px;
+  border-radius: 10px;
 }
 
 .ocr-progress-alert {
@@ -1044,13 +1196,13 @@ export default {
 
 .operation-bottom {
   display: flex;
-  gap: 8px;
+  gap: 10px;
   align-items: center;
   flex-wrap: wrap;
 }
 
 .pending-files {
-  margin-top: 10px;
+  margin-top: 12px;
 }
 
 .pending-title {
@@ -1062,7 +1214,14 @@ export default {
 .pending-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 7px;
+
+  :deep(.el-tag) {
+    border-radius: 999px;
+    background: #eff5ff;
+    border: 1px solid #d7e6ff;
+    color: #45679e;
+  }
 }
 
 .table-header {
@@ -1071,13 +1230,13 @@ export default {
   align-items: center;
   margin-bottom: 10px;
   .left {
-    font-size: 15px;
+    font-size: 16px;
     font-weight: 600;
-    color: #303133;
+    color: var(--wb-text-main);
   }
   .right {
     font-size: 12px;
-    color: #909399;
+    color: var(--wb-text-sub);
   }
 }
 
@@ -1086,22 +1245,71 @@ export default {
 }
 
 .table-empty {
-  padding: 24px;
+  padding: 28px 24px;
   text-align: center;
-  color: #909399;
+  color: var(--wb-text-sub);
   font-size: 13px;
+  background: #f7fbff;
+  border: 1px dashed #d3e2f5;
+  border-radius: 10px;
 }
 
 .pagination-wrap {
-  margin-top: 12px;
+  margin-top: 14px;
   display: flex;
   justify-content: flex-end;
+}
+
+:deep(.el-table) {
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+:deep(.el-table th.el-table__cell) {
+  background: #f5f9ff;
+  color: #4d5f78;
+  font-weight: 600;
+  border-bottom: 1px solid #e4ecf7;
+}
+
+:deep(.el-table .cell) {
+  line-height: 1.5;
+}
+
+:deep(.el-table tr) {
+  transition: background-color 0.16s ease;
+}
+
+:deep(.el-table--striped .el-table__body tr.el-table__row--striped td) {
+  background: #fbfdff;
+}
+
+:deep(.el-table__body tr:hover > td) {
+  background-color: #f0f7ff !important;
+}
+
+:deep(.el-tag) {
+  border-radius: 999px;
+  border: 0;
+}
+
+:deep(.el-tabs__item) {
+  transition: all 0.2s ease;
+}
+
+:deep(.el-tabs__item:hover) {
+  color: var(--wb-primary);
+}
+
+:deep(.el-tabs__item.is-active) {
+  color: var(--wb-primary);
+  font-weight: 600;
 }
 
 @media (max-width: 1200px) {
   .overview-row :deep(.el-col) {
     width: 25%;
-    margin-bottom: 8px;
+    margin-bottom: 10px;
   }
 
   .operation-top {
@@ -1116,6 +1324,26 @@ export default {
 @media (max-width: 768px) {
   .overview-row :deep(.el-col) {
     width: 50%;
+  }
+}
+
+@keyframes wb-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes wb-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 </style>

@@ -86,9 +86,11 @@ export const workbenchAPI = {
   // 启动邮箱拉取任务
   async startEmailPushTask(userId, payload) {
     const formData = new FormData()
-    formData.append('range_key', payload.rangeKey)
+    formData.append('range_key', payload.rangeKey || '3m')
     if (payload.mailbox) formData.append('mailbox', payload.mailbox)
     formData.append('auth_code', payload.authCode)
+    if (payload.startDate) formData.append('start_date', payload.startDate)
+    if (payload.endDate) formData.append('end_date', payload.endDate)
 
     return unwrap(await api.post(`/workbench/email-push/${userId}/start`, formData, {
       timeout: 60000,

@@ -4,6 +4,7 @@ from typing import Optional, List, Dict, Any
 import os
 import sqlite3
 import shutil
+from datetime import datetime, timedelta
 
 from models import (
     UserCreate, UserLogin, UserUpdate, UserResponse,
@@ -336,10 +337,54 @@ def _resolve_range_days(range_key: str) -> Optional[int]:
     return range_days_map.get(range_key)
 
 
-def _start_email_push_task(user_id: str, range_key: str, mailbox: Optional[str], auth_code: str):
-    days = _resolve_range_days(range_key)
+def _resolve_email_date_range(
+    range_key: Optional[str],
+    start_date: Optional[str],
+    end_date: Optional[str],
+) -> Dict[str, Any]:
+    today = datetime.now().date()
+
+    if start_date or end_date:
+        if not (start_date and end_date):
+            raise HTTPException(status_code=400, detail="自定义日期范围必须同时提供开始日期和结束日期")
+        try:
+            start_day = datetime.strptime(start_date, "%Y-%m-%d").date()
+            end_day = datetime.strptime(end_date, "%Y-%m-%d").date()
+        except Exception:
+            raise HTTPException(status_code=400, detail="日期格式错误，必须为 YYYY-MM-DD")
+        if start_day > end_day:
+            raise HTTPException(status_code=400, detail="开始日期不能晚于结束日期")
+        days = max(1, (end_day - start_day).days + 1)
+        return {
+            "days": days,
+            "date_range_mode": "custom",
+            "start_date": start_day.isoformat(),
+            "end_date": end_day.isoformat(),
+        }
+
+    resolved_range_key = (range_key or "3m").strip()
+    days = _resolve_range_days(resolved_range_key)
     if not days:
-        raise HTTPException(status_code=400, detail=f"不支持的时间范围: {range_key}")
+        raise HTTPException(status_code=400, detail=f"不支持的时间范围: {resolved_range_key}")
+    start_day = today - timedelta(days=days)
+    return {
+        "days": days,
+        "date_range_mode": f"last_{resolved_range_key}",
+        "start_date": start_day.isoformat(),
+        "end_date": today.isoformat(),
+    }
+
+
+def _start_email_push_task(
+    user_id: str,
+    range_key: Optional[str],
+    mailbox: Optional[str],
+    auth_code: str,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+):
+    date_range = _resolve_email_date_range(range_key, start_date, end_date)
+    days = int(date_range["days"])
 
     user = user_service.get_user_info(user_id)
     resolved_mailbox = (mailbox or user.get("email") or "").strip()
@@ -348,20 +393,30 @@ def _start_email_push_task(user_id: str, range_key: str, mailbox: Optional[str],
     if not auth_code:
         raise HTTPException(status_code=400, detail="授权码不能为空")
 
-    job_id = start_email_push_job(user_id=user_id, mailbox=resolved_mailbox, auth_code=auth_code, days=days)
+    job_id = start_email_push_job(
+        user_id=user_id,
+        mailbox=resolved_mailbox,
+        auth_code=auth_code,
+        days=days,
+        start_date=date_range["start_date"],
+        end_date=date_range["end_date"],
+        date_range_mode=date_range["date_range_mode"],
+    )
     return get_email_push_job(job_id)
 
 
 @api_router.post("/workbench/email-push/{user_id}/start", response_model=ApiResponse)
 async def wb_start_email_push(
     user_id: str,
-    range_key: str = Form(...),
+    range_key: str = Form("3m"),
     mailbox: Optional[str] = Form(None),
     auth_code: str = Form(...),
+    start_date: Optional[str] = Form(None),
+    end_date: Optional[str] = Form(None),
 ):
     """工作台：启动邮箱拉取任务"""
     try:
-        task = _start_email_push_task(user_id, range_key, mailbox, auth_code)
+        task = _start_email_push_task(user_id, range_key, mailbox, auth_code, start_date, end_date)
         return ResponseHelper.success(task, "邮箱任务已开始")
     except HTTPException as e:
         return ResponseHelper.error(e.detail, e.status_code)
@@ -393,13 +448,15 @@ async def wb_get_latest_email_push(user_id: str):
 @api_router.post("/email-push/{user_id}/start", response_model=ApiResponse)
 async def start_email_push(
     user_id: str,
-    range_key: str = Form(...),
+    range_key: str = Form("3m"),
     mailbox: Optional[str] = Form(None),
     auth_code: str = Form(...),
+    start_date: Optional[str] = Form(None),
+    end_date: Optional[str] = Form(None),
 ):
     """邮箱推送：拉取邮件发票附件并入库"""
     try:
-        task = _start_email_push_task(user_id, range_key, mailbox, auth_code)
+        task = _start_email_push_task(user_id, range_key, mailbox, auth_code, start_date, end_date)
         return ResponseHelper.success(task, "邮箱推送任务已开始")
     except HTTPException as e:
         return ResponseHelper.error(e.detail, e.status_code)
