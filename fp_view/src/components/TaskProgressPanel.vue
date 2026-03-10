@@ -149,12 +149,15 @@ export default {
 </script>
 
 <style scoped lang="scss">
+$primary: #4f46e5;
+$primary-light: #818cf8;
+
 .task-progress-panel {
-  border-radius: 14px;
+  border-radius: 16px;
   margin-bottom: 12px;
-  border: 1px solid rgba(164, 190, 224, 0.28);
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(244, 249, 255, 0.92));
-  box-shadow: 0 10px 26px rgba(25, 60, 112, 0.1);
+  border: 1px solid rgba($primary, 0.1);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(250, 250, 255, 0.92));
+  box-shadow: 0 10px 26px rgba($primary, 0.08);
   animation: panel-rise 0.3s ease-out;
 }
 
@@ -168,7 +171,7 @@ export default {
 .panel-title {
   font-size: 14px;
   font-weight: 600;
-  color: #303133;
+  color: #1e293b;
 }
 
 .head-tags {
@@ -180,7 +183,7 @@ export default {
 .panel-stats {
   display: flex;
   gap: 14px;
-  color: #606266;
+  color: #475569;
   font-size: 12px;
   margin-bottom: 8px;
   flex-wrap: wrap;
@@ -193,36 +196,46 @@ export default {
 .panel-line {
   margin-top: 8px;
   font-size: 12px;
-  color: #606266;
+  color: #475569;
   word-break: break-all;
 }
 
 .latest-log {
-  color: #909399;
+  color: #64748b;
 }
 
 .panel-logs {
   margin-top: 10px;
   padding-top: 8px;
-  border-top: 1px solid #ebeef5;
+  border-top: 1px solid #f1f5f9;
   max-height: 220px;
   overflow-y: auto;
 }
 
 .logs-title {
   font-size: 12px;
-  color: #606266;
+  color: #475569;
   margin-bottom: 6px;
 }
 
 .log-item {
   font-size: 12px;
   line-height: 1.6;
-  color: #606266;
+  color: #475569;
 }
 
 .log-item.error {
-  color: #f56c6c;
+  color: #ef4444;
+}
+
+:deep(.el-progress-bar__outer) {
+  background-color: #ededff;
+  border-radius: 999px;
+}
+
+:deep(.el-progress-bar__inner) {
+  background: linear-gradient(90deg, $primary, $primary-light);
+  border-radius: 999px;
 }
 
 @keyframes panel-rise {

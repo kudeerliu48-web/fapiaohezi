@@ -568,7 +568,7 @@ export default {
       }
       this.uploading = true
       try {
-        const result = await workbenchAPI.uploadBatch(this.userId, this.pendingFiles)
+        const result = await workbenchAPI.submitInvoices(this.pendingFiles, '', this.userId)
         const createdCount = Number(result?.created_count || (result?.created_invoices || []).length || 0)
         const failedCount = Number(result?.failed_count || (result?.failed_files || []).length || 0)
         if (createdCount > 0) {
@@ -838,19 +838,23 @@ export default {
 </script>
 
 <style scoped lang="scss">
+$primary: #4f46e5;
+$primary-light: #818cf8;
+$accent: #06b6d4;
+
 .workbench-page {
-  --wb-primary: #1f6fff;
-  --wb-primary-soft: #eaf2ff;
-  --wb-text-main: #1e2a3a;
-  --wb-text-sub: #6f7f96;
-  --wb-border: #e5ecf5;
-  --wb-bg: #f3f7fc;
-  --wb-card: rgba(255, 255, 255, 0.88);
+  --wb-primary: #{$primary};
+  --wb-primary-soft: #eef0ff;
+  --wb-text-main: #1e293b;
+  --wb-text-sub: #64748b;
+  --wb-border: #e2e8f0;
+  --wb-bg: #f8fafc;
+  --wb-card: rgba(255, 255, 255, 0.85);
 
   position: relative;
   padding: 18px;
-  background: radial-gradient(1200px 500px at 0% -20%, #ddecff 0%, transparent 48%),
-    radial-gradient(1200px 500px at 100% -20%, #e7fbff 0%, transparent 46%),
+  background: radial-gradient(1200px 500px at 0% -20%, rgba($primary-light, 0.12) 0%, transparent 48%),
+    radial-gradient(1200px 500px at 100% -20%, rgba($accent, 0.1) 0%, transparent 46%),
     var(--wb-bg);
   min-height: calc(100vh - 84px);
   animation: wb-fade-in 0.45s ease-out;
@@ -870,14 +874,15 @@ export default {
   z-index: 1;
   .title {
     font-size: 28px;
+    font-weight: 700;
     color: var(--wb-text-main);
-    letter-spacing: 0.5px;
+    letter-spacing: -0.5px;
     margin: 0;
   }
   .desc {
     margin-top: 6px;
     color: var(--wb-text-sub);
-    font-size: 13px;
+    font-size: 14px;
   }
 }
 
@@ -888,18 +893,18 @@ export default {
 }
 
 .overview-card {
-  border-radius: 14px;
-  border: 1px solid rgba(160, 190, 230, 0.24);
+  border-radius: 16px;
+  border: 1px solid rgba(79, 70, 229, 0.08);
   backdrop-filter: blur(8px);
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(246, 250, 255, 0.9));
-  box-shadow: 0 8px 24px rgba(26, 63, 116, 0.08);
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.96), rgba(248, 250, 252, 0.92));
+  box-shadow: 0 8px 24px rgba(79, 70, 229, 0.06);
   transition: transform 0.2s ease, box-shadow 0.24s ease, border-color 0.24s ease;
   animation: wb-rise 0.42s ease both;
 
   &:hover {
     transform: translateY(-2px);
-    box-shadow: 0 14px 28px rgba(26, 63, 116, 0.14);
-    border-color: rgba(76, 144, 255, 0.3);
+    box-shadow: 0 14px 28px rgba(79, 70, 229, 0.12);
+    border-color: rgba(79, 70, 229, 0.18);
   }
 
   .card-head {
@@ -937,12 +942,12 @@ export default {
 
 .operation-card,
 .table-card {
-  border-radius: 14px;
+  border-radius: 16px;
   margin-bottom: 14px;
-  border: 1px solid rgba(160, 190, 230, 0.22);
-  box-shadow: 0 8px 24px rgba(22, 42, 77, 0.08);
+  border: 1px solid rgba(79, 70, 229, 0.06);
+  box-shadow: 0 8px 24px rgba(79, 70, 229, 0.05);
   background: var(--wb-card);
-  backdrop-filter: blur(8px);
+  backdrop-filter: blur(12px);
   position: relative;
   z-index: 1;
 }
@@ -956,15 +961,15 @@ export default {
 
 .upload-area {
   flex: 1;
-  border: 1px dashed #c3d5ee;
-  border-radius: 12px;
+  border: 1px dashed rgba($primary, 0.25);
+  border-radius: 14px;
   padding: 14px;
-  background: linear-gradient(135deg, #f8fbff 0%, #f2f8ff 100%);
+  background: linear-gradient(135deg, #fafaff 0%, #f5f3ff 100%);
   transition: border-color 0.2s ease, background 0.2s ease, transform 0.2s ease;
 
   &.dragover {
     border-color: var(--wb-primary);
-    background: #eaf3ff;
+    background: #eef0ff;
     transform: translateY(-1px);
   }
 }
@@ -996,32 +1001,32 @@ export default {
   gap: 10px;
   align-items: flex-start;
   flex-wrap: wrap;
-
+  margin-top:20px;
   :deep(.el-button) {
     border-radius: 10px;
     transition: all 0.18s ease;
   }
 
   :deep(.el-button--primary) {
-    border-color: #1e69f3;
-    background: linear-gradient(135deg, #1f6fff, #1459d6);
-    box-shadow: 0 8px 18px rgba(31, 111, 255, 0.24);
+    border-color: $primary;
+    background: linear-gradient(135deg, $primary, $primary-light);
+    box-shadow: 0 8px 18px rgba($primary, 0.24);
   }
 
   :deep(.el-button--primary:hover) {
     transform: translateY(-1px);
-    box-shadow: 0 12px 24px rgba(31, 111, 255, 0.3);
+    box-shadow: 0 12px 24px rgba($primary, 0.3);
   }
 
   :deep(.el-button--warning) {
-    background: linear-gradient(135deg, #f8b13d, #e28b1f);
-    border-color: #e39a29;
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+    border-color: #d97706;
     color: #fff;
   }
 
   :deep(.el-button--danger) {
-    background: linear-gradient(135deg, #f66f7f, #ed4e60);
-    border-color: #ec5c6f;
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+    border-color: #dc2626;
   }
 }
 
@@ -1050,16 +1055,16 @@ export default {
   margin-bottom: 14px;
 
   .stat-card {
-    background: linear-gradient(160deg, #f6faff 0%, #eef6ff 100%);
-    border: 1px solid #dce9f9;
-    border-radius: 12px;
+    background: linear-gradient(160deg, #fafaff 0%, #f0eeff 100%);
+    border: 1px solid rgba($primary, 0.1);
+    border-radius: 14px;
     padding: 14px 10px;
     text-align: center;
     transition: transform 0.18s ease, box-shadow 0.22s ease;
 
     &:hover {
       transform: translateY(-2px);
-      box-shadow: 0 10px 20px rgba(33, 77, 143, 0.12);
+      box-shadow: 0 10px 20px rgba($primary, 0.1);
     }
 
     .stat-label {
@@ -1088,13 +1093,13 @@ export default {
   margin: 14px 0;
 
   :deep(.el-progress-bar__outer) {
-    background-color: #eaf0fa;
+    background-color: #ededff;
     height: 10px !important;
     border-radius: 999px;
   }
 
   :deep(.el-progress-bar__inner) {
-    background: linear-gradient(90deg, #1f6fff, #3da4ff);
+    background: linear-gradient(90deg, $primary, $primary-light);
     border-radius: 999px;
     transition: width 0.35s ease;
   }
@@ -1103,9 +1108,9 @@ export default {
 .email-stage-card {
   margin: 12px 0;
   padding: 12px 14px;
-  border: 1px solid #d8e7f8;
-  border-radius: 12px;
-  background: linear-gradient(160deg, #f8fbff 0%, #f2f8ff 100%);
+  border: 1px solid rgba($primary, 0.12);
+  border-radius: 14px;
+  background: linear-gradient(160deg, #fafaff 0%, #f5f3ff 100%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
   animation: wb-fade-in 0.25s ease-out;
 }
@@ -1118,19 +1123,19 @@ export default {
 
 .email-logs {
   margin-top: 12px;
-  border: 1px solid #dce8f8;
-  border-radius: 10px;
-  background: #f8fbff;
+  border: 1px solid rgba($primary, 0.1);
+  border-radius: 12px;
+  background: #fafaff;
   max-height: 300px;
   overflow-y: auto;
 
   .logs-title {
     font-size: 12px;
     font-weight: 600;
-    color: #4f6179;
+    color: #4f5b72;
     padding: 9px 12px;
-    border-bottom: 1px solid #e6eef9;
-    background: #f1f7ff;
+    border-bottom: 1px solid rgba($primary, 0.06);
+    background: #f5f3ff;
   }
 
   .logs-content {
@@ -1160,10 +1165,10 @@ export default {
   margin-top: 12px;
   color: var(--wb-text-sub);
   font-size: 12px;
-  background: #f7fbff;
-  border: 1px dashed #d4e2f4;
+  background: #fafaff;
+  border: 1px dashed rgba($primary, 0.18);
   padding: 10px 12px;
-  border-radius: 10px;
+  border-radius: 12px;
 }
 
 .ocr-progress-alert {
@@ -1218,9 +1223,9 @@ export default {
 
   :deep(.el-tag) {
     border-radius: 999px;
-    background: #eff5ff;
-    border: 1px solid #d7e6ff;
-    color: #45679e;
+    background: #f0eeff;
+    border: 1px solid rgba($primary, 0.15);
+    color: $primary;
   }
 }
 
@@ -1249,9 +1254,9 @@ export default {
   text-align: center;
   color: var(--wb-text-sub);
   font-size: 13px;
-  background: #f7fbff;
-  border: 1px dashed #d3e2f5;
-  border-radius: 10px;
+  background: #fafaff;
+  border: 1px dashed rgba($primary, 0.15);
+  border-radius: 12px;
 }
 
 .pagination-wrap {
@@ -1266,10 +1271,10 @@ export default {
 }
 
 :deep(.el-table th.el-table__cell) {
-  background: #f5f9ff;
-  color: #4d5f78;
+  background: #f8f7ff;
+  color: #4a4563;
   font-weight: 600;
-  border-bottom: 1px solid #e4ecf7;
+  border-bottom: 1px solid rgba($primary, 0.08);
 }
 
 :deep(.el-table .cell) {
@@ -1281,11 +1286,11 @@ export default {
 }
 
 :deep(.el-table--striped .el-table__body tr.el-table__row--striped td) {
-  background: #fbfdff;
+  background: #fcfbff;
 }
 
 :deep(.el-table__body tr:hover > td) {
-  background-color: #f0f7ff !important;
+  background-color: #f5f3ff !important;
 }
 
 :deep(.el-tag) {
@@ -1347,4 +1352,3 @@ export default {
   }
 }
 </style>
-

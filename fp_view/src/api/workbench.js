@@ -9,6 +9,19 @@ function unwrap(res) {
 }
 
 export const workbenchAPI = {
+  async submitInvoices(files, apiKey = '', userId = '') {
+    const formData = new FormData()
+    const normalizedFiles = Array.isArray(files) ? files : [files]
+    normalizedFiles.forEach((f) => formData.append('files', f.raw || f))
+    formData.append('api_key', apiKey ?? '')
+    if (userId) formData.append('user_id', userId)
+    const res = await api.post('/invoices/submit', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000,
+    })
+    return unwrap(res)
+  },
+
   async uploadBatch(userId, files, remark = '') {
     const formData = new FormData()
     files.forEach((f) => formData.append('files', f.raw || f))
@@ -35,7 +48,13 @@ export const workbenchAPI = {
   },
 
   async getBatchInvoices(userId, batchId, params = {}) {
-    return unwrap(await api.get(`/workbench/batch/${userId}/${batchId}/invoices`, { params }))
+    return unwrap(await api.get(`/invoices/batches/${batchId}/stream`, {
+      params: { ...params, user_id: userId || undefined },
+    }))
+  },
+
+  async getBatchStream(batchId, params = {}) {
+    return unwrap(await api.get(`/invoices/batches/${batchId}/stream`, { params }))
   },
 
   async getInvoiceDetail(userId, invoiceId) {

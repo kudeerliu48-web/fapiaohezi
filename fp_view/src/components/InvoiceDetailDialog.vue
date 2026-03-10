@@ -219,6 +219,9 @@ export default {
 </script>
 
 <style scoped lang="scss">
+$primary: #4f46e5;
+$primary-light: #818cf8;
+
 .detail-layout {
   display: flex;
   gap: 18px;
@@ -228,11 +231,11 @@ export default {
 
 .preview-pane,
 .pipeline-pane {
-  background: linear-gradient(155deg, #ffffff, #f8fbff);
-  border: 1px solid #dce8f8;
-  border-radius: 14px;
+  background: linear-gradient(155deg, #ffffff, #fafaff);
+  border: 1px solid rgba($primary, 0.08);
+  border-radius: 16px;
   padding: 14px;
-  box-shadow: 0 10px 24px rgba(24, 56, 98, 0.08);
+  box-shadow: 0 10px 24px rgba($primary, 0.06);
 }
 
 .preview-pane {
@@ -252,13 +255,13 @@ export default {
   align-items: center;
   margin-bottom: 10px;
   font-weight: 600;
-  color: #223147;
+  color: #1e293b;
 }
 
 .preview-meta {
   display: flex;
   gap: 12px;
-  color: #909399;
+  color: #64748b;
   font-size: 12px;
   margin-bottom: 10px;
   flex-wrap: wrap;
@@ -266,9 +269,9 @@ export default {
 
 .image-container {
   flex: 1;
-  border: 1px solid #e0ebf8;
-  border-radius: 12px;
-  background: radial-gradient(circle at 0% 0%, #eef6ff, #f9fcff);
+  border: 1px solid rgba($primary, 0.08);
+  border-radius: 14px;
+  background: radial-gradient(circle at 0% 0%, #f5f3ff, #fafaff);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -283,21 +286,22 @@ export default {
 }
 
 .empty-preview {
-  color: #909399;
+  color: #64748b;
 }
 
 .summary-card {
   margin-bottom: 14px;
-  padding: 12px;
-  border-radius: 12px;
-  background: linear-gradient(135deg, #f7fbff, #eff6ff);
-  border: 1px solid #dce8f8;
+  padding: 14px;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #fafaff, #f0eeff);
+  border: 1px solid rgba($primary, 0.1);
 }
 
 .summary-title {
   font-size: 14px;
   font-weight: 600;
   margin-bottom: 8px;
+  color: #1e293b;
 }
 
 .summary-grid {
@@ -312,11 +316,11 @@ export default {
   gap: 8px;
   font-size: 12px;
   label {
-    color: #909399;
+    color: #64748b;
     flex-shrink: 0;
   }
   span {
-    color: #303133;
+    color: #1e293b;
     text-align: right;
     word-break: break-all;
   }
@@ -326,7 +330,7 @@ export default {
   font-size: 14px;
   font-weight: 600;
   margin-bottom: 10px;
-  color: #25364e;
+  color: #1e293b;
 }
 
 .step-title-row {
@@ -337,18 +341,18 @@ export default {
 }
 
 .step-duration {
-  color: #909399;
+  color: #64748b;
   font-size: 12px;
 }
 
 .step-meta {
   font-size: 12px;
-  color: #606266;
+  color: #475569;
   margin-bottom: 8px;
 }
 
 .step-error {
-  color: #f56c6c;
+  color: #ef4444;
 }
 
 .step-json-block {
@@ -357,15 +361,30 @@ export default {
   gap: 8px;
 }
 
+:deep(.el-dialog) {
+  border-radius: 20px;
+  overflow: hidden;
+}
+
 :deep(.el-dialog__header) {
-  border-bottom: 1px solid #e7effb;
-  padding-bottom: 14px;
+  background: linear-gradient(135deg, $primary, #312e81);
+  padding: 18px 24px;
+  border-bottom: none;
 }
 
 :deep(.el-dialog__title) {
-  color: #1f2d41;
+  color: white;
   font-weight: 700;
   letter-spacing: 0.2px;
+}
+
+:deep(.el-dialog__headerbtn .el-dialog__close) {
+  color: rgba(255, 255, 255, 0.7);
+  &:hover { color: white; }
+}
+
+:deep(.el-dialog__body) {
+  padding: 18px;
 }
 
 :deep(.el-collapse-item__header) {
@@ -374,7 +393,18 @@ export default {
 }
 
 :deep(.el-collapse-item__header:hover) {
-  background: #f5f9ff;
+  background: #f5f3ff;
+}
+
+:deep(.el-radio-button__inner) {
+  border: none;
+  border-radius: 8px !important;
+  transition: all 0.2s ease;
+}
+
+:deep(.el-radio-button__orig-radio:checked + .el-radio-button__inner) {
+  background: $primary;
+  box-shadow: 0 4px 12px rgba($primary, 0.3);
 }
 
 @keyframes detail-fade {
