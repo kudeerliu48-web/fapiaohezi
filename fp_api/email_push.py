@@ -1,4 +1,5 @@
 import asyncio
+import concurrent.futures
 import imaplib
 import os
 import re
@@ -7,11 +8,11 @@ import threading
 import uuid
 from datetime import datetime, timedelta
 from email.header import decode_header
+from email.message import Message
 from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import email as pyemail
-import httpx
 
 from config import config
 from database import DatabaseManager
@@ -19,6 +20,14 @@ from database import DatabaseManager
 
 _email_jobs: Dict[str, Dict[str, Any]] = {}
 _email_jobs_lock = threading.Lock()
+
+MAX_ATTACHMENT_WORKERS = 4
+MAX_RECOGNITION_SUBMITS = 4
+
+_recognition_submit_executor = concurrent.futures.ThreadPoolExecutor(
+    max_workers=MAX_RECOGNITION_SUBMITS,
+    thread_name_prefix="email-recognition",
+)
 
 _EMAIL_TERMINAL_STATUS = {"completed", "failed", "partial_success", "cancelled"}
 _EMAIL_STAGE_BASE_PROGRESS = {
@@ -95,85 +104,6 @@ def _imap_date(value: datetime) -> str:
     return value.strftime("%d-%b-%Y")
 
 
-def _extract_links_from_html(html: str) -> List[str]:
-    if not html:
-        return []
-    links = re.findall(r'href=[\"\']?(https?://[^\"\'\s>]+)', html, flags=re.I)
-    keep: List[str] = []
-    for u in links:
-        if any(k in u.lower() for k in ["jss.com.cn", "nnfp", "fapiao.com", "invoice", "download", "/pdf", ".pdf"]):
-            keep.append(u)
-    out: List[str] = []
-    seen = set()
-    for u in keep:
-        if u in seen:
-            continue
-        seen.add(u)
-        out.append(u)
-    return out
-
-
-def _group_choose_files(files: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
-    # 输入: [(filename, abs_path), ...]
-    # 输出: 同名主文件只保留优先级最高的一个
-    def key_base(fn: str) -> str:
-        b = os.path.basename(fn)
-        b = re.sub(r"\.(pdf|ofd|xml|jpg|jpeg|png|webp)$", "", b, flags=re.I)
-        return b
-
-    priority = {".jpg": 1, ".jpeg": 1, ".png": 1, ".webp": 1, ".pdf": 2, ".ofd": 3, ".xml": 4}
-    grouped: Dict[str, List[Tuple[str, str]]] = {}
-    for fn, p in files:
-        grouped.setdefault(key_base(fn), []).append((fn, p))
-
-    chosen: List[Tuple[str, str]] = []
-    for _, items in grouped.items():
-        items_sorted = sorted(items, key=lambda it: priority.get(os.path.splitext(it[0].lower())[1], 99))
-        chosen.append(items_sorted[0])
-    return chosen
-
-
-def _download_link_best_effort_sync(url: str, save_dir: str) -> Optional[str]:
-    os.makedirs(save_dir, exist_ok=True)
-    try:
-        with httpx.Client(follow_redirects=True, timeout=30.0) as client:
-            r = client.get(url)
-            if r.status_code != 200:
-                return None
-
-            ctype = (r.headers.get("content-type") or "").lower()
-            if not any(x in ctype for x in ["pdf", "image", "octet-stream", "application"]):
-                return None
-
-            cd = r.headers.get("content-disposition") or ""
-            filename = None
-            m = re.search(r"filename\*=UTF-8''([^;]+)", cd)
-            if m:
-                filename = m.group(1)
-            if not filename:
-                m = re.search(r'filename="?([^";]+)"?', cd)
-                if m:
-                    filename = m.group(1)
-            if not filename:
-                filename = url.split("?")[0].rsplit("/", 1)[-1] or f"link_{uuid.uuid4().hex}"
-
-            filename = _safe_filename(filename)
-            if not os.path.splitext(filename)[1]:
-                if "pdf" in ctype:
-                    filename += ".pdf"
-                elif "png" in ctype:
-                    filename += ".png"
-                elif "jpeg" in ctype or "jpg" in ctype:
-                    filename += ".jpg"
-
-            path = os.path.join(save_dir, filename)
-            with open(path, "wb") as f:
-                f.write(r.content)
-            return path
-    except Exception:
-        return None
-
-
 def asyncio_run(coro):
     try:
         return asyncio.run(coro)
@@ -195,14 +125,14 @@ def _calc_progress(job: Dict[str, Any]) -> float:
 
     matched = int(job.get("matched_emails") or 0)
     imported = int(job.get("imported_invoices") or 0)
-    recognized = int(job.get("recognized_invoices") or 0)
+    submitted = int(job.get("recognition_jobs_submitted") or 0)
     failed = int(job.get("failed_count") or 0)
 
     if stage in {"parse_message", "download_attachment", "import_invoice"} and matched > 0:
         handled = imported + failed
         base += min(18.0, (handled * 18.0) / max(1, matched))
     elif stage == "trigger_recognition" and imported > 0:
-        base += min(10.0, (recognized * 10.0) / max(1, imported))
+        base += min(10.0, (submitted * 10.0) / max(1, imported))
 
     return round(min(99.0, max(0.0, base)), 2)
 
@@ -224,6 +154,7 @@ def _normalize_email_job_payload(job_id: Optional[str], job: Optional[Dict[str, 
             "task_type": "email_pull",
             "status": "not_found",
             "raw_status": "not_found",
+            "batch_id": None,
             "user_id": None,
             "mailbox": "INBOX",
             "mailbox_account": "",
@@ -239,6 +170,11 @@ def _normalize_email_job_payload(job_id: Optional[str], job: Optional[Dict[str, 
             "downloaded_attachments": 0,
             "imported_invoices": 0,
             "recognized_invoices": 0,
+            "recognition_jobs_submitted": 0,
+            "pdf_attachments_found": 0,
+            "pdf_attachments_downloaded": 0,
+            "small_files_bypassed": 0,
+            "large_files_converted_to_webp": 0,
             "failed_count": 0,
             "current_email_subject": "",
             "current_attachment_name": "",
@@ -251,7 +187,6 @@ def _normalize_email_job_payload(job_id: Optional[str], job: Optional[Dict[str, 
             "logs": [],
             "errors": [],
             "recognize_job_id": None,
-            # 兼容旧前端字段
             "total": 0,
             "completed": 0,
             "failed": 0,
@@ -274,6 +209,7 @@ def _normalize_email_job_payload(job_id: Optional[str], job: Optional[Dict[str, 
     downloaded = int(job.get("downloaded_attachments") or 0)
     imported = int(job.get("imported_invoices") or 0)
     recognized = int(job.get("recognized_invoices") or 0)
+    submitted = int(job.get("recognition_jobs_submitted") or 0)
     failed_count = int(job.get("failed_count") or 0)
     total = max(matched, imported + failed_count)
 
@@ -286,6 +222,7 @@ def _normalize_email_job_payload(job_id: Optional[str], job: Optional[Dict[str, 
         "task_type": "email_pull",
         "status": status,
         "raw_status": raw_status,
+        "batch_id": job.get("batch_id"),
         "user_id": job.get("user_id"),
         "mailbox": job.get("mailbox") or "INBOX",
         "mailbox_account": job.get("mailbox_account") or "",
@@ -301,6 +238,11 @@ def _normalize_email_job_payload(job_id: Optional[str], job: Optional[Dict[str, 
         "downloaded_attachments": downloaded,
         "imported_invoices": imported,
         "recognized_invoices": recognized,
+        "recognition_jobs_submitted": submitted,
+        "pdf_attachments_found": int(job.get("pdf_attachments_found") or 0),
+        "pdf_attachments_downloaded": int(job.get("pdf_attachments_downloaded") or 0),
+        "small_files_bypassed": int(job.get("small_files_bypassed") or 0),
+        "large_files_converted_to_webp": int(job.get("large_files_converted_to_webp") or 0),
         "failed_count": failed_count,
         "current_email_subject": job.get("current_email_subject") or "",
         "current_attachment_name": job.get("current_attachment_name") or "",
@@ -313,7 +255,6 @@ def _normalize_email_job_payload(job_id: Optional[str], job: Optional[Dict[str, 
         "logs": list(job.get("logs") or []),
         "errors": list(job.get("errors") or []),
         "recognize_job_id": job.get("recognize_job_id"),
-        # 兼容旧前端字段
         "total": total,
         "completed": imported,
         "failed": failed_count,
@@ -326,6 +267,11 @@ def _normalize_email_job_payload(job_id: Optional[str], job: Optional[Dict[str, 
             "success_count": imported,
             "failed_count": failed_count,
             "recognized_invoices": recognized,
+            "recognition_jobs_submitted": submitted,
+            "pdf_attachments_found": int(job.get("pdf_attachments_found") or 0),
+            "pdf_attachments_downloaded": int(job.get("pdf_attachments_downloaded") or 0),
+            "small_files_bypassed": int(job.get("small_files_bypassed") or 0),
+            "large_files_converted_to_webp": int(job.get("large_files_converted_to_webp") or 0),
         },
     }
 
@@ -386,6 +332,183 @@ def _set_stage(job_id: str, stage: str, message: Optional[str] = None) -> None:
         _log(job_id, message)
 
 
+def _is_pdf_part(filename: str, content_type: str) -> bool:
+    ext = os.path.splitext((filename or "").lower())[1]
+    ctype = (content_type or "").lower()
+    if ext == ".pdf":
+        return True
+    if "pdf" in ctype and ext in {"", ".pdf"}:
+        return True
+    return False
+
+
+def _parse_header_for_match(
+    imap: imaplib.IMAP4_SSL,
+    mid: bytes,
+    start_day,
+    end_day,
+) -> Tuple[bool, str]:
+    status, head = imap.fetch(mid, "(BODY[HEADER.FIELDS (SUBJECT DATE)])")
+    if status != "OK" or not head or not head[0] or not head[0][1]:
+        return False, ""
+
+    msg = pyemail.message_from_bytes(head[0][1])
+    subject = _safe_decode_header(msg.get("Subject", ""))
+    if "发票" not in subject:
+        return False, subject
+
+    date_str = msg.get("Date", "")
+    try:
+        msg_dt = parsedate_to_datetime(date_str)
+        if msg_dt.tzinfo is not None:
+            msg_dt = msg_dt.astimezone().replace(tzinfo=None)
+        msg_date = msg_dt.date()
+    except Exception:
+        return False, subject
+
+    if not (start_day <= msg_date <= end_day):
+        return False, subject
+    return True, subject
+
+
+def _extract_pdf_attachments_from_message(msg: Message) -> List[Tuple[str, bytes]]:
+    pdf_parts: List[Tuple[str, bytes]] = []
+    for part in msg.walk():
+        filename = part.get_filename()
+        if not filename:
+            continue
+        decoded_name = _safe_decode_header(filename)
+        content_type = (part.get_content_type() or "").lower()
+        if not _is_pdf_part(decoded_name, content_type):
+            continue
+        payload = part.get_payload(decode=True)
+        if not payload:
+            continue
+        if not decoded_name.lower().endswith(".pdf"):
+            decoded_name = f"{decoded_name}.pdf"
+        pdf_parts.append((decoded_name, payload))
+    return pdf_parts
+
+
+def _recognize_invoice_worker(job_id: str, user_id: str, invoice_id: str, invoice_name: str) -> None:
+    from workbench_service import workbench_service
+
+    try:
+        asyncio_run(workbench_service.rerun_invoice(user_id, invoice_id))
+    except Exception as e:
+        _error(job_id, f"识别执行失败：{invoice_name} ({invoice_id}) - {str(e)}")
+
+
+def _submit_recognition_async(job_id: str, user_id: str, invoice_id: str, invoice_name: str) -> None:
+    try:
+        _set_stage(job_id, "trigger_recognition", "正在提交识别任务...")
+        _recognition_submit_executor.submit(_recognize_invoice_worker, job_id, user_id, invoice_id, invoice_name)
+        _inc(job_id, recognition_jobs_submitted=1, recognized_invoices=1)
+        _set(job_id, current_invoice_id=invoice_id, current_invoice_name=invoice_name)
+        _log(job_id, f"已提交识别任务：{invoice_name} ({invoice_id})")
+    except Exception as e:
+        _inc(job_id, failed_count=1)
+        _error(job_id, f"提交识别任务失败：{invoice_name} - {str(e)}")
+
+
+def _process_single_attachment(
+    job_id: str,
+    user_id: str,
+    batch_id: str,
+    file_service,
+    save_dir: str,
+    message_token: str,
+    attachment_name: str,
+    payload: bytes,
+) -> None:
+    _set_stage(job_id, "download_attachment", f"正在下载附件：{attachment_name}")
+    _set(job_id, current_attachment_name=attachment_name)
+
+    local_name = _safe_filename(f"{message_token}_{attachment_name}")
+    local_path = os.path.join(save_dir, local_name)
+    with open(local_path, "wb") as f:
+        f.write(payload)
+
+    _inc(job_id, downloaded_attachments=1, pdf_attachments_downloaded=1)
+    _log(job_id, f"附件下载成功：{attachment_name}")
+
+    _set_stage(job_id, "import_invoice", f"正在导入发票：{attachment_name}")
+    result = asyncio_run(
+        file_service.import_local_file(
+            user_id=user_id,
+            src_path=local_path,
+            original_filename=attachment_name,
+            batch_id=batch_id,
+            email_pipeline=True,
+        )
+    )
+    pages = (result or {}).get("pages") or []
+    added = len(pages)
+    if added <= 0:
+        raise RuntimeError("导入后未生成发票记录")
+
+    small_bypassed = int((result or {}).get("small_file_bypassed") or 0)
+    large_webp = int((result or {}).get("large_file_converted_to_webp") or 0)
+    _inc(
+        job_id,
+        imported_invoices=added,
+        small_files_bypassed=small_bypassed,
+        large_files_converted_to_webp=large_webp,
+    )
+
+    _log(job_id, f"导入成功：{attachment_name}（新增 {added} 张）")
+    try:
+        from workbench_service import workbench_service
+        workbench_service.refresh_batch(user_id, batch_id)
+    except Exception:
+        pass
+
+    for page in pages:
+        invoice_id = str(page.get("id") or "").strip()
+        if not invoice_id:
+            continue
+        invoice_name = page.get("filename") or attachment_name
+        _submit_recognition_async(job_id, user_id, invoice_id, invoice_name)
+
+
+def _process_single_message(
+    job_id: str,
+    user_id: str,
+    batch_id: str,
+    message_bytes: bytes,
+    message_token: str,
+    save_dir: str,
+) -> None:
+    from services import file_service
+
+    _set_stage(job_id, "parse_message", "正在解析邮件内容...")
+    msg = pyemail.message_from_bytes(message_bytes)
+    subject = _safe_decode_header(msg.get("Subject", ""))
+    _set(job_id, current_email_subject=subject, current_attachment_name="")
+
+    pdf_parts = _extract_pdf_attachments_from_message(msg)
+    if not pdf_parts:
+        _log(job_id, f"邮件无 PDF 附件：{subject or message_token}")
+        return
+
+    _inc(job_id, pdf_attachments_found=len(pdf_parts))
+    for attachment_name, payload in pdf_parts:
+        try:
+            _process_single_attachment(
+                job_id=job_id,
+                user_id=user_id,
+                batch_id=batch_id,
+                file_service=file_service,
+                save_dir=save_dir,
+                message_token=message_token,
+                attachment_name=attachment_name,
+                payload=payload,
+            )
+        except Exception as e:
+            _inc(job_id, failed_count=1)
+            _error(job_id, f"附件处理失败：{attachment_name} - {str(e)}")
+
+
 def start_email_push_job(
     user_id: str,
     mailbox: str,
@@ -401,6 +524,7 @@ def start_email_push_job(
             "job_id": job_id,
             "task_type": "email_pull",
             "status": "queued",
+            "batch_id": None,
             "user_id": user_id,
             "mailbox": "INBOX",
             "mailbox_account": mailbox,
@@ -416,6 +540,11 @@ def start_email_push_job(
             "downloaded_attachments": 0,
             "imported_invoices": 0,
             "recognized_invoices": 0,
+            "recognition_jobs_submitted": 0,
+            "pdf_attachments_found": 0,
+            "pdf_attachments_downloaded": 0,
+            "small_files_bypassed": 0,
+            "large_files_converted_to_webp": 0,
             "failed_count": 0,
             "current_email_subject": "",
             "current_attachment_name": "",
@@ -463,8 +592,6 @@ def _run_email_push_job_sync(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
 ) -> None:
-    from services import file_service
-
     _set(job_id, status="running")
     _set_stage(job_id, "connect_imap", "正在连接邮箱...")
 
@@ -473,6 +600,17 @@ def _run_email_push_job_sync(
     if not user:
         _inc(job_id, failed_count=1)
         _error(job_id, "用户不存在")
+        _set(job_id, status="failed", finished_at=_email_now())
+        return
+
+    try:
+        from workbench_service import workbench_service
+        email_batch_id = workbench_service.create_batch(user_id, remark="??????")
+        _set(job_id, batch_id=email_batch_id)
+        _log(job_id, f"??????????{email_batch_id}")
+    except Exception as e:
+        _inc(job_id, failed_count=1)
+        _error(job_id, f"???????????{str(e)}")
         _set(job_id, status="failed", finished_at=_email_now())
         return
 
@@ -485,35 +623,32 @@ def _run_email_push_job_sync(
         start_dt = end_dt - timedelta(days=days)
     if start_dt > end_dt:
         start_dt, end_dt = end_dt, start_dt
+
     start_day = start_dt.date()
     end_day = end_dt.date()
     end_plus_one = end_dt + timedelta(days=1)
 
-    _set(
-        job_id,
-        start_date=start_day.isoformat(),
-        end_date=end_day.isoformat(),
-    )
+    _set(job_id, start_date=start_day.isoformat(), end_date=end_day.isoformat())
     save_dir = os.path.join(config.get_upload_dir(user_id), "_email_tmp", job_id)
     os.makedirs(save_dir, exist_ok=True)
 
     imap = None
-    matched_ids: List[bytes] = []
-    imported_invoice_ids: List[str] = []
+    futures: List[concurrent.futures.Future] = []
+    matched_count = 0
 
     try:
         imap = imaplib.IMAP4_SSL(host)
         imap.login(mailbox, auth_code)
-        _log(job_id, f"已连接 IMAP 服务器：{host}")
+        _log(job_id, f"已连接 IMAP 服务：{host}")
 
         _set_stage(job_id, "select_mailbox", "正在选择邮箱文件夹 INBOX...")
         status, _ = imap.select("INBOX")
         if status != "OK":
             raise RuntimeError("选择 INBOX 失败")
-        _log(job_id, "已选择 INBOX")
+        _log(job_id, "当前邮箱文件夹：INBOX")
         _log(job_id, f"生效日期范围：{start_day.isoformat()} 至 {end_day.isoformat()}")
 
-        _set_stage(job_id, "search_emails", "正在搜索邮件...")
+        _set_stage(job_id, "search_emails", "正在搜索指定日期范围邮件...")
         search_since = _imap_date(start_dt)
         search_before = _imap_date(end_plus_one)
         _log(job_id, f"IMAP SEARCH 条件：SINCE {search_since} BEFORE {search_before}")
@@ -521,162 +656,65 @@ def _run_email_push_job_sync(
         if status != "OK":
             raise RuntimeError("IMAP 搜索失败")
         all_ids = data[0].split() if data and data[0] else []
-        _set(job_id, scanned_emails=0)
-        _log(job_id, f"服务端返回候选邮件 {len(all_ids)} 封")
+        _log(job_id, f"服务端候选邮件数量：{len(all_ids)}")
 
-        _set_stage(job_id, "filter_emails", "正在过滤符合条件的邮件...")
-        for idx, mid in enumerate(all_ids, start=1):
-            _inc(job_id, scanned_emails=1)
-            try:
-                status, head = imap.fetch(mid, "(BODY[HEADER.FIELDS (SUBJECT DATE)])")
-                if status != "OK" or not head or not head[0] or not head[0][1]:
-                    continue
-
-                msg = pyemail.message_from_bytes(head[0][1])
-                subject = _safe_decode_header(msg.get("Subject", ""))
-                if "发票" not in subject:
-                    continue
-
-                date_str = msg.get("Date", "")
+        _set_stage(job_id, "filter_emails", "正在本地二次过滤邮件...")
+        attachment_executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=MAX_ATTACHMENT_WORKERS,
+            thread_name_prefix=f"email-attachment-{job_id[:6]}",
+        )
+        try:
+            for idx, mid in enumerate(all_ids, start=1):
+                _inc(job_id, scanned_emails=1)
                 try:
-                    msg_dt = parsedate_to_datetime(date_str)
-                    if msg_dt.tzinfo is not None:
-                        msg_dt = msg_dt.astimezone().replace(tzinfo=None)
-                    msg_date = msg_dt.date()
-                except Exception:
-                    continue
-
-                if not (start_day <= msg_date <= end_day):
-                    continue
-                matched_ids.append(mid)
-            except Exception:
-                continue
-            finally:
-                if idx % 50 == 0:
-                    _log(job_id, f"已扫描邮件 {idx}/{len(all_ids)}")
-
-        _set(job_id, matched_emails=len(matched_ids))
-        _log(job_id, f"本地二次过滤后邮件 {len(matched_ids)} 封")
-        _log(job_id, f"最终进入附件处理邮件 {len(matched_ids)} 封")
-
-        if not matched_ids:
-            _log(job_id, "未匹配到符合条件的邮件")
-            _set_stage(job_id, "finalize", "正在汇总任务结果...")
-            _set(job_id, status="completed", finished_at=_email_now(), current_email_subject="", current_attachment_name="")
-            _log(job_id, "邮箱拉取完成（无匹配邮件）")
-            return
-
-        for idx, mid in enumerate(matched_ids, start=1):
-            _set_stage(job_id, "parse_message", f"正在解析邮件 {idx}/{len(matched_ids)}...")
-            try:
-                status, mdata = imap.fetch(mid, "(RFC822)")
-                if status != "OK" or not mdata or not mdata[0] or not mdata[0][1]:
-                    _inc(job_id, failed_count=1)
-                    _error(job_id, f"邮件内容读取失败：#{idx}")
-                    continue
-
-                msg = pyemail.message_from_bytes(mdata[0][1])
-                subject = _safe_decode_header(msg.get("Subject", ""))
-                _set(job_id, current_email_subject=subject, current_attachment_name="")
-                _log(job_id, f"处理邮件：{subject or f'# {idx}'}")
-
-                attachments: List[Tuple[str, str]] = []
-                links: List[str] = []
-
-                for part in msg.walk():
-                    filename = part.get_filename()
-                    content_type = (part.get_content_type() or "").lower()
-                    if filename:
-                        fname = _safe_decode_header(filename)
-                        ext = os.path.splitext(fname.lower())[1]
-                        if ext in {".pdf", ".jpg", ".jpeg", ".png", ".webp", ".ofd", ".xml"}:
-                            _set_stage(job_id, "download_attachment", f"正在下载附件：{fname}")
-                            local_name = _safe_filename(f"{mid.decode(errors='ignore')}_{fname}")
-                            local_path = os.path.join(save_dir, local_name)
-                            payload = part.get_payload(decode=True)
-                            if payload:
-                                with open(local_path, "wb") as f:
-                                    f.write(payload)
-                                attachments.append((fname, local_path))
-                                _inc(job_id, downloaded_attachments=1)
-                                _log(job_id, f"附件下载成功：{fname}")
-                    elif content_type == "text/html":
-                        try:
-                            charset = part.get_content_charset() or "utf-8"
-                            html = part.get_payload(decode=True)
-                            if isinstance(html, (bytes, bytearray)):
-                                html = html.decode(charset, errors="ignore")
-                            else:
-                                html = str(html)
-                            links.extend(_extract_links_from_html(html))
-                        except Exception:
-                            continue
-
-                for link in links:
-                    if not any(k in link.lower() for k in ["jss.com.cn", "nnfp", "invoice", "fapiao", ".pdf"]):
+                    matched, subject = _parse_header_for_match(imap, mid, start_day, end_day)
+                    if not matched:
                         continue
-                    _set_stage(job_id, "download_attachment", "正在下载邮件中的发票链接...")
-                    p = _download_link_best_effort_sync(link, save_dir)
-                    if p:
-                        attachments.append((os.path.basename(p), p))
-                        _inc(job_id, downloaded_attachments=1)
-                        _log(job_id, f"链接附件下载成功：{os.path.basename(p)}")
-                    else:
+                    matched_count += 1
+                    _inc(job_id, matched_emails=1)
+                    _set(job_id, current_email_subject=subject or "", current_attachment_name="")
+
+                    status, mdata = imap.fetch(mid, "(RFC822)")
+                    if status != "OK" or not mdata or not mdata[0] or not mdata[0][1]:
                         _inc(job_id, failed_count=1)
-                        _error(job_id, f"链接附件下载失败：{link}")
+                        _error(job_id, f"读取邮件正文失败：{subject or mid.decode(errors='ignore')}")
+                        continue
 
-                chosen = _group_choose_files(attachments)
-                if not chosen:
-                    _log(job_id, f"邮件未发现可导入附件：{subject or f'# {idx}'}")
-                    continue
-
-                for original_name, local_path in chosen:
-                    _set_stage(job_id, "import_invoice", f"正在导入发票：{original_name}")
-                    _set(job_id, current_attachment_name=original_name)
-                    try:
-                        result = asyncio_run(
-                            file_service.import_local_file(
-                                user_id=user_id,
-                                src_path=local_path,
-                                original_filename=original_name,
-                            )
+                    message_bytes = mdata[0][1]
+                    message_token = mid.decode(errors="ignore") or f"msg_{idx}"
+                    futures.append(
+                        attachment_executor.submit(
+                            _process_single_message,
+                            job_id,
+                            user_id,
+                            email_batch_id,
+                            message_bytes,
+                            message_token,
+                            save_dir,
                         )
-                        pages = (result or {}).get("pages") or []
-                        added = len(pages)
-                        if added <= 0:
-                            _inc(job_id, failed_count=1)
-                            _error(job_id, f"导入后未生成发票记录：{original_name}")
-                            continue
-                        ids = [str(p.get("id")) for p in pages if p.get("id")]
-                        imported_invoice_ids.extend(ids)
-                        _inc(job_id, imported_invoices=added)
-                        _log(job_id, f"导入成功：{original_name}（新增 {added} 条）")
-                    except Exception as e:
-                        _inc(job_id, failed_count=1)
-                        _error(job_id, f"导入失败：{original_name}，{str(e)}")
-            except Exception as e:
-                _inc(job_id, failed_count=1)
-                _error(job_id, f"邮件处理失败：{str(e)}")
-
-        if imported_invoice_ids:
-            _set_stage(job_id, "trigger_recognition", "正在触发发票识别...")
-            _log(job_id, f"待识别发票数量：{len(imported_invoice_ids)}")
-            from workbench_service import workbench_service
-            for idx, invoice_id in enumerate(imported_invoice_ids, start=1):
-                _set(
-                    job_id,
-                    current_invoice_id=invoice_id,
-                    current_invoice_name=f"{idx}/{len(imported_invoice_ids)}",
-                )
-                try:
-                    asyncio_run(workbench_service.rerun_invoice(user_id, invoice_id))
-                    _inc(job_id, recognized_invoices=1)
-                    _log(job_id, f"识别完成：{invoice_id}")
+                    )
                 except Exception as e:
                     _inc(job_id, failed_count=1)
-                    _error(job_id, f"识别失败：{invoice_id}，{str(e)}")
-        else:
-            _log(job_id, "未导入任何发票，跳过识别阶段")
+                    _error(job_id, f"邮件过滤失败：{str(e)}")
+                finally:
+                    if idx % 50 == 0:
+                        _log(job_id, f"已扫描邮件 {idx}/{len(all_ids)}")
+
+            _log(job_id, f"本地二次过滤后邮件数量：{matched_count}")
+            _log(job_id, f"最终进入附件处理邮件数量：{matched_count}")
+
+            if matched_count == 0:
+                _log(job_id, "未匹配到符合条件的邮件")
+
+            if futures:
+                for future in concurrent.futures.as_completed(futures):
+                    try:
+                        future.result()
+                    except Exception as e:
+                        _inc(job_id, failed_count=1)
+                        _error(job_id, f"附件工作线程失败：{str(e)}")
+        finally:
+            attachment_executor.shutdown(wait=True, cancel_futures=False)
 
         _set_stage(job_id, "finalize", "正在汇总任务结果...")
         with _email_jobs_lock:

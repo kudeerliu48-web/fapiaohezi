@@ -1,10 +1,14 @@
 import io
 import os
+import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 from PIL import Image, ImageFilter, ImageOps
+
+
+SMALL_FILE_BYPASS_THRESHOLD = 300 * 1024  # 300KB
 
 
 @dataclass(frozen=True)
@@ -76,26 +80,10 @@ def _apply_unsharp(image: Image.Image, enabled: bool) -> Tuple[Image.Image, bool
     return sharpened, True
 
 
-def _save_webp(image: Image.Image, output_path: Path, quality: int, convert_to_grayscale: bool = False) -> int:
-    """Save image as WebP.
-    
-    Args:
-        image: PIL Image to save
-        output_path: Output file path
-        quality: WebP quality (1-100)
-        convert_to_grayscale: If True, convert to grayscale before saving
-    
-    Returns:
-        File size in bytes
-    """
+def _save_webp(image: Image.Image, output_path: Path, quality: int) -> int:
+    """Save image as color WebP and return file size in bytes."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    
-    if convert_to_grayscale:
-        # Convert to grayscale mode for better OCR performance
-        img = image.convert("L").convert("RGB")  # L mode for processing, RGB for WebP compatibility
-    else:
-        img = image.convert("RGB")
-    
+    img = image.convert("RGB")
     buf = io.BytesIO()
     img.save(buf, format="WEBP", quality=quality, method=6)
     data = buf.getvalue()
@@ -110,7 +98,7 @@ def process_images_to_webp_pages(
     base_id: str,
     original_filename: str,
     profile: ProcessProfile | None = None,
-    save_color_version: bool = True,  # Save color version for preview
+    save_color_version: bool = True,
 ) -> List[dict]:
     """Process a list of PIL images into webp pages under processed_dir.
 
@@ -122,7 +110,7 @@ def process_images_to_webp_pages(
         base_id: Base ID for filename generation
         original_filename: Original uploaded filename
         profile: Processing profile settings
-        save_color_version: If True, save both color and grayscale versions
+        save_color_version: If True, keep color filename for preview mapping
     """
     profile = profile or ProcessProfile()
     results: List[dict] = []
@@ -138,28 +126,22 @@ def process_images_to_webp_pages(
         resized, _ = _resize_long_edge(cropped, long_edge=target_long_edge, allow_upscale=small_text)
         processed, _ = _apply_unsharp(resized, enabled=small_text)
 
-        # Generate filenames
         processed_filename = f"{base_id}_p{idx}.webp"
-        color_filename = f"{base_id}_p{idx}_color.webp" if save_color_version else None
-        
-        # Save color version for preview (if enabled)
-        if save_color_version and color_filename:
-            color_path = processed_dir / color_filename
-            _save_webp(processed, color_path, quality=quality, convert_to_grayscale=False)
-        
-        # Save grayscale version for OCR (main version)
+        color_filename = processed_filename if save_color_version else None
         out_path = processed_dir / processed_filename
-        out_bytes = _save_webp(processed, out_path, quality=quality, convert_to_grayscale=True)
+        out_bytes = _save_webp(processed, out_path, quality=quality)
 
         results.append(
             {
                 "page_index": idx,
-                "processed_filename": processed_filename,  # Grayscale version for OCR
-                "color_filename": color_filename,  # Color version for preview
+                "processed_filename": processed_filename,
+                "color_filename": color_filename,
                 "processed_bytes": out_bytes,
                 "processed_width": processed.width,
                 "processed_height": processed.height,
                 "original_filename": original_filename,
+                "small_file_bypassed": False,
+                "large_file_converted_to_webp": True,
             }
         )
 
@@ -207,3 +189,50 @@ def process_upload_to_pages(
         )
 
     raise ValueError(f"Unsupported file extension: {ext}")
+
+
+def prepare_file_for_email_pipeline(
+    *,
+    upload_path: Path,
+    original_filename: str,
+    processed_dir: Path,
+    base_id: str,
+    bypass_threshold: int = SMALL_FILE_BYPASS_THRESHOLD,
+) -> List[dict]:
+    """
+    Email pipeline file preparation:
+    - file <= 300KB: bypass preprocessing/compression/conversion, copy as-is.
+    - file > 300KB: convert to WebP pages (color only, no grayscale).
+    """
+    ext = upload_path.suffix.lower()
+    size = upload_path.stat().st_size if upload_path.exists() else 0
+
+    if size <= bypass_threshold:
+        processed_dir.mkdir(parents=True, exist_ok=True)
+        processed_filename = f"{base_id}{ext}"
+        out_path = processed_dir / processed_filename
+        shutil.copyfile(upload_path, out_path)
+        return [
+            {
+                "page_index": 1,
+                "processed_filename": processed_filename,
+                "color_filename": None,
+                "processed_bytes": size,
+                "processed_width": None,
+                "processed_height": None,
+                "original_filename": original_filename,
+                "small_file_bypassed": True,
+                "large_file_converted_to_webp": False,
+            }
+        ]
+
+    pages = process_upload_to_pages(
+        upload_path=upload_path,
+        original_filename=original_filename,
+        processed_dir=processed_dir,
+        base_id=base_id,
+    )
+    for p in pages:
+        p["small_file_bypassed"] = False
+        p["large_file_converted_to_webp"] = True
+    return pages

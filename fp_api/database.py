@@ -1,22 +1,21 @@
-import sqlite3
+﻿import sqlite3
 import os
 from typing import List, Dict, Any, Optional
 from datetime import datetime
 from utils import generate_uuid, format_datetime, safe_json_dumps
 
 class DatabaseManager:
-    """数据库管理器"""
+    """鏁版嵁搴撶鐞嗗櫒"""
     
     def __init__(self, db_path: str = "main.db"):
         self.db_path = db_path
         self.init_database()
     
     def init_database(self):
-        """初始化数据库"""
+        """鍒濆鍖栨暟鎹簱"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        # 用户表
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS users (
                 id TEXT PRIMARY KEY,
@@ -39,7 +38,6 @@ class DatabaseManager:
             )
         ''')
         
-        # 登录日志表
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS login_logs (
                 id TEXT PRIMARY KEY,
@@ -57,13 +55,13 @@ class DatabaseManager:
         conn.close()
     
     def get_connection(self):
-        """获取数据库连接"""
+        """鑾峰彇鏁版嵁搴撹繛鎺?"""
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
         return conn
     
     def create_user(self, user_data: Dict[str, Any]) -> str:
-        """创建用户"""
+        """鍒涘缓鐢ㄦ埛"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -93,7 +91,7 @@ class DatabaseManager:
         return user_id
     
     def get_user_by_username(self, username: str) -> Optional[Dict[str, Any]]:
-        """根据用户名获取用户"""
+        """鏍规嵁鐢ㄦ埛鍚嶈幏鍙栫敤鎴?"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -108,8 +106,24 @@ class DatabaseManager:
         
         return dict(user) if user else None
     
+    def get_user_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+        """根据邮箱获取用户。"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        cursor.execute('''
+            SELECT id, username, password, email, company, phone, status, 
+                   register_time, last_login_time, avatar_url, role
+            FROM users WHERE email = ?
+        ''', (email,))
+        
+        user = cursor.fetchone()
+        conn.close()
+        
+        return dict(user) if user else None
+    
     def get_user_by_id(self, user_id: str) -> Optional[Dict[str, Any]]:
-        """根据ID获取用户"""
+        """鏍规嵁ID鑾峰彇鐢ㄦ埛"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -125,16 +139,16 @@ class DatabaseManager:
         return dict(user) if user else None
     
     def update_user(self, user_id: str, update_data: Dict[str, Any]) -> bool:
-        """更新用户信息"""
+        """鏇存柊鐢ㄦ埛淇℃伅"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        # 构建更新语句
+        # 鏋勫缓鏇存柊璇彞
         update_fields = []
         update_values = []
         
         for field, value in update_data.items():
-            if field in ['email', 'company', 'phone', 'avatar_url']:
+            if field in ['username', 'email', 'company', 'phone', 'avatar_url']:
                 update_fields.append(f"{field} = ?")
                 update_values.append(value)
         
@@ -154,7 +168,7 @@ class DatabaseManager:
         return result
     
     def update_login_time(self, user_id: str) -> bool:
-        """更新登录时间"""
+        """鏇存柊鐧诲綍鏃堕棿"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -169,7 +183,7 @@ class DatabaseManager:
     
     def create_login_log(self, user_id: str, ip_address: str = None, 
                        user_agent: str = None, status: int = 1) -> str:
-        """创建登录日志"""
+        """鍒涘缓鐧诲綍鏃ュ織"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -185,13 +199,15 @@ class DatabaseManager:
         conn.close()
         return log_id
     
-    def user_exists(self, username: str = None, email: str = None) -> bool:
-        """检查用户是否存在"""
+    def user_exists(self, username: str = None, email: str = None, phone: str = None) -> bool:
+        """妫€鏌ョ敤鎴锋槸鍚﹀瓨鍦?"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
         if username:
             cursor.execute("SELECT id FROM users WHERE username = ?", (username,))
+        elif phone:
+            cursor.execute("SELECT id FROM users WHERE username = ?", (phone,))
         elif email:
             cursor.execute("SELECT id FROM users WHERE email = ?", (email,))
         else:
@@ -203,11 +219,11 @@ class DatabaseManager:
         return user is not None
 
 class UserDatabaseManager:
-    """用户数据库管理器"""
+    """鐢ㄦ埛鏁版嵁搴撶鐞嗗櫒"""
     
     @staticmethod
     def init_user_database(user_id: str, db_path: str) -> bool:
-        """初始化用户数据库"""
+        """鍒濆鍖栫敤鎴锋暟鎹簱"""
         try:
             conn = sqlite3.connect(db_path)
             cursor = conn.cursor()
@@ -220,7 +236,7 @@ class UserDatabaseManager:
                     filename TEXT NOT NULL,
                     saved_filename TEXT,
                     processed_filename TEXT,
-                    color_filename TEXT,  -- 彩色版本文件名（用于预览）
+                    color_filename TEXT,   
                     original_file_path TEXT,
                     processed_file_path TEXT,
                     page_index INTEGER,
@@ -250,7 +266,6 @@ class UserDatabaseManager:
                 )
             ''')
 
-            # 批次表
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS batches (
                     id TEXT PRIMARY KEY,
@@ -266,7 +281,6 @@ class UserDatabaseManager:
                 )
             ''')
 
-            # 处理步骤表
             cursor.execute('''
                 CREATE TABLE IF NOT EXISTS invoice_steps (
                     id TEXT PRIMARY KEY,
@@ -294,8 +308,7 @@ class UserDatabaseManager:
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_invoice_steps_batch_id ON invoice_steps(batch_id)")
             cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_invoice_steps_invoice_step_unique ON invoice_steps(invoice_id, step_name)")
 
-            # 兼容迁移：为已存在的表补齐新增字段
-            cursor.execute("PRAGMA table_info(invoice_details)")
+            # 鍏煎杩佺Щ锛氫负宸插瓨鍦ㄧ殑琛ㄨˉ榻愭柊澧炲瓧娈?            cursor.execute("PRAGMA table_info(invoice_details)")
             existing_columns = {row[1] for row in cursor.fetchall()}
 
             if 'saved_filename' not in existing_columns:
@@ -344,19 +357,19 @@ class UserDatabaseManager:
             conn.close()
             return True
         except Exception as e:
-            print(f"初始化用户数据库失败: {e}")
+            print(f"鍒濆鍖栫敤鎴锋暟鎹簱澶辫触: {e}")
             return False
     
     @staticmethod
     def get_connection(db_path: str):
-        """获取用户数据库连接"""
+        """鑾峰彇鐢ㄦ埛鏁版嵁搴撹繛鎺?"""
         conn = sqlite3.connect(db_path)
         conn.row_factory = sqlite3.Row
         return conn
     
     @staticmethod
     def create_invoice_record(user_id: str, db_path: str, invoice_data: Dict[str, Any]) -> str:
-        """创建发票记录"""
+        """鍒涘缓鍙戠エ璁板綍"""
         conn = UserDatabaseManager.get_connection(db_path)
         cursor = conn.cursor()
         
@@ -392,7 +405,7 @@ class UserDatabaseManager:
     @staticmethod
     def update_invoice_recognition(user_id: str, db_path: str, invoice_id: str, 
                                ocr_result: Dict[str, Any]) -> bool:
-        """更新发票识别结果"""
+        """鏇存柊鍙戠エ璇嗗埆缁撴灉"""
         conn = UserDatabaseManager.get_connection(db_path)
         cursor = conn.cursor()
         
@@ -405,8 +418,7 @@ class UserDatabaseManager:
                 or (json_info.get('extracted_data', {}) or {}).get('invoice_date')
             )
 
-        # 结构化金额字段补齐
-        amount_without_tax = ocr_result.get('amount_without_tax')
+        # 缁撴瀯鍖栭噾棰濆瓧娈佃ˉ榻?        amount_without_tax = ocr_result.get('amount_without_tax')
         tax_amount = ocr_result.get('tax_amount')
         total_with_tax = ocr_result.get('total_with_tax')
 
@@ -448,7 +460,7 @@ class UserDatabaseManager:
     
     @staticmethod
     def get_invoices(user_id: str, db_path: str, page: int = 1, limit: int = 10, keyword: str = None, recognized_only: bool = False) -> Dict[str, Any]:
-        """获取发票列表"""
+        """鑾峰彇鍙戠エ鍒楄〃"""
         conn = UserDatabaseManager.get_connection(db_path)
         cursor = conn.cursor()
         
@@ -499,7 +511,7 @@ class UserDatabaseManager:
     
     @staticmethod
     def get_invoice_by_id(user_id: str, db_path: str, invoice_id: str) -> Optional[Dict[str, Any]]:
-        """根据ID获取发票详情"""
+        """鏍规嵁ID鑾峰彇鍙戠エ璇︽儏"""
         conn = UserDatabaseManager.get_connection(db_path)
         cursor = conn.cursor()
         
@@ -514,7 +526,7 @@ class UserDatabaseManager:
 
     @staticmethod
     def delete_invoice(db_path: str, invoice_id: str) -> bool:
-        """删除发票记录"""
+        """鍒犻櫎鍙戠エ璁板綍"""
         conn = UserDatabaseManager.get_connection(db_path)
         cursor = conn.cursor()
         cursor.execute("DELETE FROM invoice_details WHERE id = ?", (invoice_id,))
@@ -525,7 +537,7 @@ class UserDatabaseManager:
 
     @staticmethod
     def delete_invoices(db_path: str, invoice_ids: List[str]) -> int:
-        """批量删除发票记录，返回删除条数"""
+        """鎵归噺鍒犻櫎鍙戠エ璁板綍锛岃繑鍥炲垹闄ゆ潯鏁?"""
         if not invoice_ids:
             return 0
         conn = UserDatabaseManager.get_connection(db_path)
@@ -536,3 +548,4 @@ class UserDatabaseManager:
         conn.commit()
         conn.close()
         return affected
+

@@ -1,7 +1,11 @@
 import json
 import os
+import re
 import shutil
+import sqlite3
+import threading
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -25,6 +29,7 @@ class WorkbenchService:
 
     def __init__(self):
         self.main_db = DatabaseManager()
+        self._batch_id_lock = threading.Lock()
 
     def _ensure_user(self, user_id: str) -> None:
         if not self.main_db.get_user_by_id(user_id):
@@ -186,23 +191,76 @@ class WorkbenchService:
         conn.commit()
         conn.close()
 
-    def _create_batch(self, user_db_path: str, user_id: str, remark: Optional[str] = None) -> str:
-        batch_id = generate_uuid()
-        now = format_datetime()
-        conn = UserDatabaseManager.get_connection(user_db_path)
-        cursor = conn.cursor()
+    def _generate_batch_id(self, cursor, user_id: str, date_key: str) -> str:
+        """
+        批次号规则：userid + yyyymmdd + seq3
+        例：10001 + 20260310 + 001 => 1000120260310001
+        """
+        prefix = f"{user_id}{date_key}"
         cursor.execute(
             """
-            INSERT INTO batches (
-                id, user_id, status, total_invoices, success_count, failed_count,
-                total_duration_ms, remark, created_at, updated_at
-            ) VALUES (?, ?, ?, 0, 0, 0, 0, ?, ?, ?)
+            SELECT id
+            FROM batches
+            WHERE user_id = ? AND id LIKE ?
+            ORDER BY id DESC
+            LIMIT 100
             """,
-            (batch_id, user_id, "processing", remark, now, now),
+            (user_id, f"{prefix}%"),
         )
-        conn.commit()
-        conn.close()
-        return batch_id
+        rows = cursor.fetchall()
+        max_seq = 0
+        pattern = re.compile(rf"^{re.escape(prefix)}(\d{{3}})$")
+        for row in rows:
+            batch_id = row["id"] if isinstance(row, dict) or hasattr(row, "__getitem__") else str(row)
+            if not isinstance(batch_id, str):
+                continue
+            match = pattern.match(batch_id)
+            if not match:
+                continue
+            try:
+                seq = int(match.group(1))
+            except Exception:
+                continue
+            if seq > max_seq:
+                max_seq = seq
+        return f"{prefix}{(max_seq + 1):03d}"
+
+    def _create_batch(self, user_db_path: str, user_id: str, remark: Optional[str] = None) -> str:
+        now = format_datetime()
+        date_key = datetime.now().strftime("%Y%m%d")
+
+        with self._batch_id_lock:
+            conn = UserDatabaseManager.get_connection(user_db_path)
+            cursor = conn.cursor()
+            for _ in range(30):
+                batch_id = self._generate_batch_id(cursor, user_id, date_key)
+                try:
+                    cursor.execute(
+                        """
+                        INSERT INTO batches (
+                            id, user_id, status, total_invoices, success_count, failed_count,
+                            total_duration_ms, remark, created_at, updated_at
+                        ) VALUES (?, ?, ?, 0, 0, 0, 0, ?, ?, ?)
+                        """,
+                        (batch_id, user_id, "processing", remark, now, now),
+                    )
+                    conn.commit()
+                    conn.close()
+                    return batch_id
+                except sqlite3.IntegrityError:
+                    continue
+            conn.close()
+        raise HTTPException(status_code=500, detail="批次号生成失败")
+
+    def create_batch(self, user_id: str, remark: Optional[str] = None) -> str:
+        """对外批次创建入口，供邮箱导入等链路复用。"""
+        user_db_path = self._get_user_db_path(user_id)
+        return self._create_batch(user_db_path, user_id, remark=remark)
+
+    def refresh_batch(self, user_id: str, batch_id: str) -> None:
+        """对外批次刷新入口。"""
+        user_db_path = self._get_user_db_path(user_id)
+        self._refresh_batch(user_db_path, batch_id)
 
     async def upload_and_create_batch(
         self,
