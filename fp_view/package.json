@@ -1,0 +1,25 @@
+{
+  "name": "fapiaohezi",
+  "version": "1.0.0",
+  "description": "发票识别管理系统",
+  "private": true,
+  "scripts": {
+    "serve": "vue-cli-service serve",
+    "build": "vue-cli-service build"
+  },
+  "dependencies": {
+    "core-js": "^3.27.2",
+    "element-ui": "^2.15.14",
+    "vue": "^2.7.14",
+    "vue-router": "^3.5.4",
+    "axios": "^1.6.0"
+  },
+  "devDependencies": {
+    "@vue/cli-plugin-babel": "~5.0.8",
+    "@vue/cli-plugin-router": "~5.0.8",
+    "@vue/cli-service": "~5.0.8",
+    "sass": "^1.69.5",
+    "sass-loader": "^13.3.2",
+    "vue-template-compiler": "^2.7.14"
+  }
+}

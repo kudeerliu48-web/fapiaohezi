@@ -1,0 +1,403 @@
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html, body {
+  height: 100%;
+}
+
+#app {
+  height: 100%;
+}
+
+// 覆盖 Element 部分样式以适配深色主题
+.main-content {
+  .el-card {
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(0, 0, 0, 0.06);
+    border-radius: 16px;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
+  }
+  .el-table {
+    background: transparent !important;
+    border-radius: 12px;
+    overflow: hidden;
+  }
+  .el-table th.el-table__cell {
+    background: #f8fafc !important;
+    font-weight: 600;
+    color: #334155;
+  }
+  .el-table td.el-table__cell {
+    border-bottom: 1px solid #f1f5f9;
+  }
+  .el-button--primary {
+    background: linear-gradient(135deg, #6366f1, #8b5cf6);
+    border: none;
+    border-radius: 10px;
+    font-weight: 600;
+    transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    &:hover {
+      opacity: 0.9;
+      transform: translateY(-1px);
+      box-shadow: 0 8px 20px rgba(99, 102, 241, 0.3);
+    }
+  }
+  .el-upload-dragger {
+    border-radius: 12px;
+    border: 2px dashed rgba(99, 102, 241, 0.4);
+    background: rgba(99, 102, 241, 0.04);
+    transition: all 0.3s ease;
+    &:hover {
+      border-color: #6366f1;
+      background: rgba(99, 102, 241, 0.08);
+    }
+  }
+  .el-input__inner {
+    border-radius: 10px;
+    border: 2px solid #e2e8f0;
+    transition: all 0.2s ease;
+    &:focus {
+      border-color: #6366f1;
+      box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+    }
+  }
+  .el-tabs__item {
+    font-weight: 600;
+    color: #64748b;
+    &.is-active {
+      color: #6366f1;
+    }
+  }
+  .el-tag {
+    border-radius: 8px;
+    font-weight: 600;
+    border: none;
+  }
+}
+
+// 弹框样式全局覆盖
+.el-dialog__wrapper.edit-dialog {
+  .el-dialog {
+    border-radius: 16px !important;
+    overflow: hidden !important;
+    box-shadow: 0 15px 40px rgba(99, 102, 241, 0.1), 0 5px 15px rgba(0, 0, 0, 0.05) !important;
+    position: fixed !important;
+    top: 50% !important;
+    left: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    margin: 0 !important;
+    background: rgba(255, 255, 255, 0.95) !important;
+    backdrop-filter: blur(15px) !important;
+    border: 1px solid rgba(99, 102, 241, 0.08) !important;
+  }
+  .el-dialog__wrapper {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    background: rgba(99, 102, 241, 0.05) !important;
+    backdrop-filter: blur(5px) !important;
+    z-index: 2000 !important;
+  }
+  .el-dialog__header {
+    background: linear-gradient(135deg, #f0f4f8 0%, #e8edf2 100%) !important;
+    color: #334155 !important;
+    padding: 24px 28px 20px !important;
+    border-bottom: 1px solid rgba(99, 102, 241, 0.08) !important;
+    position: relative !important;
+    &::before {
+      content: '' !important;
+      position: absolute !important;
+      top: 0 !important;
+      left: 0 !important;
+      right: 0 !important;
+      height: 3px !important;
+      background: linear-gradient(90deg, #6366f1, #8b5cf6, #ec4899) !important;
+      border-radius: 16px 16px 0 0 !important;
+    }
+    .el-dialog__title {
+      font-size: 18px !important;
+      font-weight: 600 !important;
+      background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
+      -webkit-background-clip: text !important;
+      -webkit-text-fill-color: transparent !important;
+      background-clip: text !important;
+      letter-spacing: -0.3px !important;
+    }
+    .el-dialog__close {
+      position: absolute !important;
+      top: 16px !important;
+      right: 16px !important;
+      width: 36px !important;
+      height: 36px !important;
+      border-radius: 50% !important;
+      background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(139, 92, 246, 0.1)) !important;
+      color: #6366f1 !important;
+      font-size: 16px !important;
+      font-weight: 600 !important;
+      display: flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1) !important;
+      border: 2px solid rgba(99, 102, 241, 0.15) !important;
+      backdrop-filter: blur(10px) !important;
+      &:hover {
+        background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(139, 92, 246, 0.2)) !important;
+        color: #8b5cf6 !important;
+        transform: scale(1.1) rotate(90deg) !important;
+        border-color: rgba(139, 92, 246, 0.3) !important;
+        box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2) !important;
+      }
+      &:active {
+        transform: scale(0.95) !important;
+      }
+      &::before {
+        content: '✕' !important;
+        font-size: 18px !important;
+        line-height: 1 !important;
+      }
+    }
+  }
+  .el-dialog__body {
+    padding: 28px 28px 20px !important;
+    background: rgba(255, 255, 255, 0.5) !important;
+    .el-form {
+      .el-form-item {
+        margin-bottom: 20px !important;
+        .el-form-item__label {
+          font-weight: 500 !important;
+          color: #64748b !important;
+          font-size: 14px !important;
+          line-height: 1.4 !important;
+        }
+        .el-input {
+          .el-input__inner {
+            border-radius: 10px !important;
+            border: 2px solid #e2e8f0 !important;
+            background: rgba(255, 255, 255, 0.9) !important;
+            padding: 12px 14px !important;
+            font-size: 14px !important;
+            transition: all 0.2s ease !important;
+            &:focus {
+              border-color: #6366f1 !important;
+              background: rgba(255, 255, 255, 0.95) !important;
+              box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.08) !important;
+            }
+            &:hover {
+              border-color: #cbd5e1 !important;
+            }
+          }
+        }
+        .el-radio-group {
+          .el-radio {
+            margin-right: 20px !important;
+            .el-radio__label {
+              font-weight: 500 !important;
+              color: #475569 !important;
+              font-size: 14px !important;
+            }
+            .el-radio__input.is-checked .el-radio__inner {
+              background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
+              border-color: #6366f1 !important;
+            }
+            .el-radio__inner:hover {
+              border-color: #a78bfa !important;
+            }
+          }
+        }
+      }
+    }
+  }
+  .el-dialog__footer {
+    padding: 20px 28px 24px !important;
+    background: linear-gradient(135deg, #f0f4f8 0%, #e8edf2 100%) !important;
+    text-align: center !important;
+    border-top: 1px solid rgba(99, 102, 241, 0.08) !important;
+    .el-button {
+      border-radius: 10px !important;
+      padding: 12px 24px !important;
+      font-weight: 600 !important;
+      font-size: 14px !important;
+      margin: 0 6px !important;
+      transition: all 0.2s ease !important;
+      &.el-button--default {
+        background: #fff !important;
+        border: 2px solid #e2e8f0 !important;
+        color: #64748b !important;
+        &:hover {
+          background: #f8fafc !important;
+          border-color: #cbd5e1 !important;
+          color: #475569 !important;
+        }
+      }
+      &.el-button--primary {
+        background: linear-gradient(135deg, #6366f1, #8b5cf6) !important;
+        border: none !important;
+        color: white !important;
+        box-shadow: 0 2px 8px rgba(99, 102, 241, 0.2) !important;
+        &:hover {
+          transform: translateY(-1px) !important;
+          box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3) !important;
+        }
+      }
+    }
+  }
+}
+
+// 响应式设计
+@media (max-width: 768px) {
+  .main-container {
+    padding: 0 8.333%; /* 移动端左右各1个栅格 */
+  }
+  .aside-nav {
+    width: 25% !important; /* 移动端菜单栏占3个栅格 */
+  }
+  .main-content {
+    width: 58.333%; /* 移动端内容占7个栅格 */
+  }
+  .content-inner {
+    padding: 24px 20px 32px;
+    border-radius: 20px;
+  }
+  .main-content {
+    padding: 16px 12px 24px;
+  }
+  .logo-wrap {
+    padding: 0 16px 24px;
+    margin: 0 12px 20px;
+    justify-content: center;
+    .logo-icon {
+      font-size: 28px;
+    }
+  }
+  .nav-menu .el-menu-item {
+    height: 44px;
+    line-height: 44px;
+    font-size: 14px;
+    margin: 4px 8px;
+  }
+  .app-header .header-content {
+    padding: 16px 8.333%;
+  }
+}
+
+@media (max-width: 640px) {
+  .main-container {
+    padding: 0 4.166%; /* 小屏左右各0.5个栅格 */
+  }
+  .el-aside {
+    width: 20% !important; /* 小屏菜单栏占2.5个栅格 */
+    .logo-text {
+      display: none;
+    }
+    .nav-menu {
+      .el-menu-item span {
+        display: none;
+      }
+      .el-menu-item {
+        text-align: center;
+        padding: 0 !important;
+        min-width: auto;
+      }
+      .el-icon-user, .el-icon-document {
+        margin: 0;
+        font-size: 20px;
+      }
+    }
+  }
+  .main-content {
+    width: 70.833%; /* 小屏内容占8.5个栅格 */
+    padding: 20px 16px 24px;
+  }
+  .content-inner {
+    margin-left: 0;
+    padding: 20px 16px 24px;
+  }
+  .page-header {
+    .page-title {
+      font-size: 24px;
+    }
+  }
+  .info-cards {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  .upload-zone {
+    padding: 32px 20px;
+  }
+  .upload-icon {
+    font-size: 48px !important;
+  }
+  .email-card {
+    padding: 24px 20px;
+  }
+  .email-radios {
+    flex-direction: column;
+    gap: 8px;
+  }
+  .list-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    .search-input {
+      width: 100%;
+    }
+  }
+  .logo-wrap {
+    justify-content: center;
+  }
+  .app-header .header-content {
+    padding: 16px 4.166%;
+  }
+}
+
+@media (max-width: 480px) {
+  .main-container {
+    padding: 0 2.083%; /* 超小屏左右各0.25个栅格 */
+  }
+  .content-inner {
+    padding: 16px 12px 20px;
+    border-radius: 16px;
+  }
+  .main-content {
+    padding: 12px 8px 20px;
+    width: 91.666%; /* 超小屏内容占11个栅格 */
+  }
+  .el-aside {
+    width: 16.666% !important; /* 超小屏菜单栏占2个栅格 */
+  }
+  .page-title {
+    font-size: 20px !important;
+  }
+  .upload-zone {
+    padding: 24px 16px;
+    border-radius: 16px;
+  }
+  .upload-actions {
+    flex-direction: column;
+    .el-button {
+      width: 100%;
+    }
+  }
+  .info-card {
+    padding: 20px;
+    min-height: 80px;
+  }
+  .avatar-box {
+    width: 80px;
+    height: 80px;
+    .avatar-text {
+      font-size: 30px;
+    }
+  }
+  .logo-wrap {
+    justify-content: center;
+  }
+  .app-header .header-content {
+    padding: 16px 2.083%;
+  }
+}
